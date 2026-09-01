@@ -171,4 +171,4 @@ Stage 2 raises a plain `Exception` prefixed with `[EXPECTED]`, following the ski
 | `gl.UserError` vs `gl.vm.UserError` exact symbol | Stage 3 |
 | Whether to move the runner pin to `9b8kjyda...` | Stage 4 (user decision) |
 | `strict_eq` convergence on real pages | Stage 4 gate |
-| Whether Studio's schema loader agrees with `genvm-lint schema` | Manual check by the user |
+| ~~Whether Studio's schema loader agrees with `genvm-lint schema`~~ | **CLOSED** - user confirmed in Studio; ABI rendered, deploy FINALIZED (`STAGE_2_CONTRACT_FOUNDATION.md` §12) |

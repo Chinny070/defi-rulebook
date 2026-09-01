@@ -159,27 +159,45 @@ A test asserts none of these exists yet, so a placeholder cannot be introduced a
 
 The single lint warning is `W002 Non-deterministic call 'time.time()'` — a documented false positive; see `STAGE_2_RUNTIME_COMPATIBILITY.md` §5.
 
-**Precise wording:** this is **LOCAL GENLAYER SCHEMA EXTRACTION PASSED**. It is not a claim that Studio schema loading was confirmed — that requires the runtime, and nothing was deployed.
+**Precise wording for the checks above:** those constitute **LOCAL GENLAYER SCHEMA EXTRACTION PASSED**, which on its own is not a claim about Studio.
 
 ---
 
-## 12. Manual verification step for the user
+## 12. Studio schema load — **CONFIRMED BY THE USER**
 
-Local extraction is the strongest non-deployment evidence available, but it exercises the linter's SDK loader, not Studio's. To confirm end to end, without any commitment:
+The manual check below was performed by the user in GenLayer Studio after Stage 2 was committed. **Claude did not deploy anything.**
+
+Observed result:
+
+- Studio parsed `defi_rulebook.py` and rendered the ABI panel. **No "could not load contract schema" error.**
+- Read Methods listed exactly: `get_caps`, `get_config`, `get_counts`, `get_vocabularies`.
+- Write Methods listed exactly: `set_paused`.
+- A Stage 2 scaffold instance was deployed by the user (address shown truncated as `0x73...Dc47`), and the deploy transaction reached **Consensus: FINALIZED** with GenVM `execution finished`.
+
+This upgrades the historical failure mode from a risk to a closed item: **the runtime pin, header shape, storage dataclasses, and public ABI all load under the real Studio schema loader**, not just the linter's SDK loader.
+
+Two consequences worth carrying into later stages:
+
+1. **The deployed instance is a disposable scaffold, not the production deployment.** The production address is the one deployed after the full lifecycle exists.
+2. **Storage layout is order-sensitive.** If that instance is ever kept alive via Studio's "Upgrade code" rather than redeployed, every new storage field added in Stages 3-10 must be **appended at the end** of the existing declarations; reordering or inserting fields breaks a deployed contract. Given how much storage later stages add, a clean redeploy per stage is the safer default, and the scaffold instance should be treated as throwaway.
+
+### The check, for repeating after any later stage
 
 1. Open GenLayer Studio.
-2. Create a new contract and paste the full contents of `contracts/defi_rulebook.py` — **the `# { "Depends": ... }` line must remain the first line**.
-3. Studio should parse the contract and display the schema/ABI: constructor with no parameters, one write method `set_paused`, four view methods.
-4. If the ABI panel renders, schema loading is confirmed. If **"could not load contract schema"** appears, stop and report it before Stage 3; do not deploy.
-5. Deployment remains yours to perform, whenever you choose.
+2. Paste the full contents of `contracts/defi_rulebook.py` — **the `# { "Depends": ... }` line must remain the first line**.
+3. Confirm the ABI panel renders the expected read/write methods.
+4. If **"could not load contract schema"** ever appears, stop and report it before proceeding; do not deploy.
+5. Deployment remains the user's to perform.
 
 ---
 
 ## 13. Known unknowns
 
-Carried from `STAGE_2_RUNTIME_COMPATIBILITY.md` §10: outbound transfer failure semantics; the exact `UserError` symbol; whether to adopt the newer runner hash; `strict_eq` convergence on real pages; and whether Studio's loader agrees with the local extractor.
+Carried from `STAGE_2_RUNTIME_COMPATIBILITY.md` §10: outbound transfer failure semantics; the exact `UserError` symbol; whether to adopt the newer runner hash; and `strict_eq` convergence on real pages.
 
-None of these is designed around. Each has a named stage.
+**Closed:** "whether Studio's loader agrees with the local extractor" — confirmed by the user, §12.
+
+None of the remaining items is designed around. Each has a named stage.
 
 ---
 
