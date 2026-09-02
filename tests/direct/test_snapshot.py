@@ -538,8 +538,8 @@ def test_unknown_snapshot_lookup_is_rejected(direct_vm, direct_deploy, direct_al
 def test_config_publishes_snapshot_parameters(direct_vm, direct_deploy, direct_alice):
     c = deploy(direct_vm, direct_deploy, direct_alice)
     cfg = c.get_config()
-    assert cfg["contract_version"] == "0.4.0-stage4"
-    assert cfg["schema_version"] == "3"
+    assert cfg["contract_version"] == "0.5.0-stage5"
+    assert cfg["schema_version"] == "4"
     assert cfg["snapshot_fingerprint_scheme"] == "DRB-SNAP-FP-v1"
     assert cfg["excerpt_lead_chars"] == 200
     assert cfg["max_snapshot_attempts"] == 3

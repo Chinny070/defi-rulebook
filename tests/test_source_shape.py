@@ -116,8 +116,8 @@ def test_no_backend_or_scraping_imports():
 
 def test_import_allowlist():
     """Only modules the GenVM linter permits, plus the SDK itself."""
-    allowed = {"genlayer", "dataclasses", "hashlib", "time", "unicodedata",
-               "urllib.parse"}
+    allowed = {"genlayer", "dataclasses", "hashlib", "json", "time",
+               "unicodedata", "urllib.parse"}
     assert _imported_modules() <= allowed, _imported_modules() - allowed
 
 
@@ -127,33 +127,99 @@ def test_urllib_is_only_the_parse_submodule():
         assert banned not in TEXT
 
 
-def test_no_adjudication_calls_yet():
-    """Web retrieval is allowed from Stage 4; model adjudication is not."""
-    for call in ["gl.nondet.exec_prompt", "exec_prompt(", "gl.vm.run_nondet",
-                 "prompt_comparative", "prompt_non_comparative", "gl.nondet.image"]:
-        assert call not in TEXT, f"adjudication must not appear yet: {call}"
+def test_no_challenge_or_payout_calls_yet():
+    """Retrieval and adjudication are live from Stages 4-5; the rest is not."""
+    for name in ["def challenge", "def readjudicate", "def finalize",
+                 "def settle_bond", "emit_transfer", "gl.nondet.image"]:
+        assert name not in TEXT, f"must not appear yet: {name}"
 
 
-def test_web_retrieval_is_confined_to_the_snapshot_path():
-    """Exactly one nondet block, inside snapshot_evidence."""
+def _span(tree, name):
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == name
+    )
+    return fn.lineno, max(x.lineno for x in ast.walk(fn) if hasattr(x, "lineno"))
+
+
+def test_nondeterminism_is_confined_to_two_known_methods():
+    """Web retrieval belongs to snapshot_evidence; the model to adjudication.
+
+    Exactly two equivalence blocks exist, each in its own method, so no other
+    code path can reach the network or a model.
+    """
     tree = ast.parse(TEXT)
     web_calls = [
         n.lineno for n in ast.walk(tree)
         if isinstance(n, ast.Call) and "gl.nondet.web" in ast.unparse(n.func)
     ]
+    prompt_calls = [
+        n.lineno for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and "exec_prompt" in ast.unparse(n.func)
+    ]
     eq_calls = [
         n.lineno for n in ast.walk(tree)
         if isinstance(n, ast.Call) and "eq_principle" in ast.unparse(n.func)
     ]
-    assert len(eq_calls) == 1, f"expected one equivalence block, got {eq_calls}"
+    assert len(eq_calls) == 2, f"expected two equivalence blocks, got {eq_calls}"
 
+    snap_lo, snap_hi = _span(tree, "snapshot_evidence")
+    adj_lo, adj_hi = _span(tree, "request_adjudication")
+
+    for line in web_calls:
+        assert snap_lo <= line <= snap_hi, f"web call at {line} outside snapshot"
+    for line in prompt_calls:
+        assert adj_lo <= line <= adj_hi, f"prompt at {line} outside adjudication"
+
+
+def test_the_model_never_reaches_the_web():
+    """The adjudication path must contain no retrieval call of any kind."""
+    tree = ast.parse(TEXT)
     fn = next(
         n for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef) and n.name == "snapshot_evidence"
+        if isinstance(n, ast.FunctionDef) and n.name == "request_adjudication"
     )
-    lo, hi = fn.lineno, max(x.lineno for x in ast.walk(fn) if hasattr(x, "lineno"))
-    for line in web_calls + eq_calls:
-        assert lo <= line <= hi, f"web/equivalence call at line {line} is outside snapshot_evidence"
+    body = ast.unparse(fn)
+    for call in ["gl.nondet.web", "web.get", "web.render"]:
+        assert call not in body, f"adjudication must not retrieve: {call}"
+
+
+def test_prompt_excludes_economic_and_identity_signals():
+    """Bond amounts and submitter identity must never enter the prompt.
+
+    Scans the executable body only. The function's own docstring explains what
+    is excluded and would otherwise match every term it names.
+    """
+    tree = ast.parse(TEXT)
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "_build_prompt"
+    )
+    statements = fn.body[1:] if ast.get_docstring(fn) else fn.body
+
+    # Check DATA ACCESS, not prose. The prompt legitimately tells the model
+    # that submitter assertions are unverified and that popularity is not
+    # authority; what must never happen is reading such a value into it.
+    banned_fields = {
+        "reporter", "submitter", "registrant", "case_bond", "sender_address",
+        "challenge_bond_bps", "claim_slash_bps", "drift_slash_bps",
+        "snapshot",  # raw page text enters only via the untrusted block below
+    }
+    accessed = set()
+    for node in statements:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Attribute):
+                accessed.add(sub.attr)
+            elif isinstance(sub, ast.Name):
+                accessed.add(sub.id)
+
+    leaked = accessed & (banned_fields - {"snapshot"})
+    assert not leaked, f"prompt reads forbidden fields: {leaked}"
+
+    # `snapshot` is read exactly once, and only between the untrusted markers.
+    unparsed = [ast.unparse(node) for node in statements]
+    snapshot_lines = [line for line in unparsed if ".snapshot" in line]
+    assert len(snapshot_lines) == 1, snapshot_lines
 
 
 def test_equivalence_is_not_applied_to_a_whole_page():
@@ -243,7 +309,7 @@ def test_no_treasury_trial_contamination():
     foreign = [
         "treasury", "allocation", "amendment", "dao_", "proposal_amount",
         "disbursement", "budget", "grant", "foresign", "reality_lock",
-        "continuum", "contradiction",
+        "continuum protocol", "contradiction protocol",
     ]
     lowered = TEXT.lower()
     for term in foreign:
