@@ -33,8 +33,8 @@ def test_config_reports_identity_and_versions(direct_vm, direct_deploy, direct_a
     c = direct_deploy(CONTRACT)
     cfg = c.get_config()
     assert cfg["contract_name"] == "DEFI_RULEBOOK"
-    assert cfg["contract_version"] == "0.7.0-stage7"
-    assert cfg["schema_version"] == "6"
+    assert cfg["contract_version"] == "0.8.0-stage8"
+    assert cfg["schema_version"] == "7"
     assert cfg["dimension_set_version"] == "1"
     assert cfg["case_fingerprint_scheme"] == "DRB-CASE-FP-v1"
 
