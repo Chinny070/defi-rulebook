@@ -8,6 +8,8 @@ import json
 
 import pytest
 
+from _helpers import freeze_with_bond
+
 CONTRACT = "contracts/defi_rulebook.py"
 
 URL_A = "https://docs.example.com/faq/withdrawals"
@@ -56,7 +58,7 @@ def proposed_case(c, direct_vm, decision="ESTABLISHED", results=None,
     case_id = c.open_rule_claim(rule_id, text, "ethereum mainnet", "")
     eid = c.submit_evidence(case_id, URL_A, "RENDER_TEXT", ANCHORS,
                             "OFFICIAL_DOCUMENTATION", NOTE, 0, False)
-    c.freeze_evidence(case_id)
+    freeze_with_bond(c, direct_vm, case_id)
     direct_vm.clear_mocks()
     direct_vm.mock_web(r".*", {"status": 200, "body": PAGE})
     c.snapshot_evidence(eid)
@@ -496,7 +498,7 @@ def test_drift_creates_version_two_and_supersedes_version_one(
     eid2 = c.submit_evidence(drift_case, "https://gov.example.org/d/9", "GET",
                              ["emergency pause"], "FINALIZED_GOVERNANCE_DECISION",
                              NOTE, 1740000000, True)
-    c.freeze_evidence(drift_case)
+    freeze_with_bond(c, direct_vm, drift_case)
     direct_vm.clear_mocks()
     direct_vm.mock_web(r".*", {"status": 200,
                                "body": "Executed. An emergency pause may last 7 days."})

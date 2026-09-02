@@ -127,11 +127,41 @@ def test_urllib_is_only_the_parse_submodule():
         assert banned not in TEXT
 
 
-def test_no_gen_economics_yet():
-    """Challenges and finalization are live from Stage 6; economics are not."""
-    for name in ["def settle_bond", "emit_transfer", "gl.evm.contract_interface",
-                 "payable", "gl.message.value", "gl.nondet.image"]:
-        assert name not in TEXT, f"must not appear yet: {name}"
+def test_exactly_one_payable_entry_point():
+    """Value can enter the contract through lock_bond and nowhere else."""
+    assert TEXT.count("@gl.public.write.payable") == 1
+    assert TEXT.count("gl.message.value") == 1
+    tree = ast.parse(TEXT)
+    payable = [
+        n.name for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef)
+        and any("payable" in ast.unparse(d) for d in n.decorator_list)
+    ]
+    assert payable == ["lock_bond"], payable
+
+
+def test_no_reputation_or_staking_machinery():
+    """V1 has proposer bonds only.
+
+    Checks IDENTIFIERS, not prose: the contract's own comments legitimately
+    say that reputation, staking and voting are absent.
+    """
+    tree = ast.parse(TEXT)
+    identifiers = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            identifiers.add(node.name.lower())
+        elif isinstance(node, ast.Name):
+            identifiers.add(node.id.lower())
+        elif isinstance(node, ast.Attribute):
+            identifiers.add(node.attr.lower())
+        elif isinstance(node, ast.arg):
+            identifiers.add(node.arg.lower())
+
+    for banned in ["reputation", "staking", "stake", "vote", "voting", "quorum",
+                   "weight", "score"]:
+        matches = {name for name in identifiers if banned in name}
+        assert not matches, f"{banned} machinery present: {matches}"
 
 
 def _span(tree, name):
@@ -250,11 +280,35 @@ def test_render_is_text_mode_only():
     assert "screenshot" not in TEXT
 
 
-def test_no_payout_execution_yet():
-    for call in ["emit_transfer", "gl.evm.contract_interface", ".emit(",
-                 "gl.deploy_contract", "gl.get_contract_at",
-                 "gl.message.value", "payable"]:
-        assert call not in TEXT, f"payout logic must not appear yet: {call}"
+def test_payout_uses_the_documented_transfer_api():
+    """emit_transfer via get_contract_at, and nothing more exotic."""
+    assert "gl.get_contract_at" in TEXT
+    assert "emit_transfer" in TEXT
+    # The old project's contract_interface shim is not the documented path.
+    assert "gl.evm.contract_interface" not in TEXT
+    assert "gl.deploy_contract" not in TEXT
+
+
+def test_transfers_only_happen_in_execute_payout():
+    tree = ast.parse(TEXT)
+    transfers = [
+        n.lineno for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and "emit_transfer" in ast.unparse(n.func)
+    ]
+    lo, hi = _span(tree, "execute_payout")
+    for line in transfers:
+        assert lo <= line <= hi, f"transfer at line {line} outside execute_payout"
+
+
+def test_payout_has_no_caller_supplied_recipient():
+    """A recipient argument would allow substitution; there must not be one."""
+    tree = ast.parse(TEXT)
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "execute_payout"
+    )
+    args = [a.arg for a in fn.args.args]
+    assert args == ["self", "case_id"], args
 
 
 def test_no_canonical_version_write_shortcut():

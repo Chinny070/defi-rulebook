@@ -5,6 +5,8 @@ No web retrieval, no adjudication, no canonical versions minted by public ABI.
 
 import pytest
 
+from _helpers import freeze_with_bond, lock_bond
+
 CONTRACT = "contracts/defi_rulebook.py"
 
 URL_A = "https://docs.example.com/faq/withdrawals"
@@ -498,7 +500,7 @@ def test_freeze_requires_minimum_evidence(direct_vm, direct_deploy, direct_alice
     a_protocol(c)
     case_id = a_claim(c, a_rule(c))
     with pytest.raises(Exception, match=r"MIN_EVIDENCE"):
-        c.freeze_evidence(case_id)
+        freeze_with_bond(c, direct_vm, case_id)
 
 
 def test_freeze_binds_ordered_evidence_and_fingerprint(direct_vm, direct_deploy,
@@ -509,7 +511,7 @@ def test_freeze_binds_ordered_evidence_and_fingerprint(direct_vm, direct_deploy,
     e1 = add_evidence(c, case_id, url=URL_A)
     e2 = add_evidence(c, case_id, url=URL_B, kind="GOVERNANCE_PROPOSAL")
 
-    fingerprint = c.freeze_evidence(case_id)
+    fingerprint = freeze_with_bond(c, direct_vm, case_id)
     assert len(fingerprint) == 64
 
     frozen = c.get_case_frozen_evidence(case_id)
@@ -534,7 +536,7 @@ def test_fingerprint_is_deterministic_and_input_sensitive(direct_vm, direct_depl
         rule_id = c.propose_rule("example-v3", "EMERGENCY_CONTROLS", title)
         case_id = c.open_rule_claim(rule_id, text, "", "")
         add_evidence(c, case_id, url=url)
-        return c.freeze_evidence(case_id)
+        return freeze_with_bond(c, direct_vm, case_id)
 
     text_a = "Emergency pause is capped at 72 hours."
     text_b = "Emergency pause is capped at 7 days."
@@ -565,7 +567,7 @@ def test_fingerprint_matches_the_documented_preimage(direct_vm, direct_deploy,
     case_id = c.open_rule_claim(rule_id, text, "ethereum mainnet", "")
     e1 = add_evidence(c, case_id, url=URL_A)
     e2 = add_evidence(c, case_id, url=URL_B, mode="GET", kind="GOVERNANCE_PROPOSAL")
-    produced = c.freeze_evidence(case_id)
+    produced = freeze_with_bond(c, direct_vm, case_id)
 
     def field(value):
         return f"{len(value)}:{value}"
@@ -603,7 +605,7 @@ def test_cannot_submit_evidence_after_freeze(direct_vm, direct_deploy, direct_al
     a_protocol(c)
     case_id = a_claim(c, a_rule(c))
     add_evidence(c, case_id)
-    c.freeze_evidence(case_id)
+    freeze_with_bond(c, direct_vm, case_id)
     with pytest.raises(Exception, match=r"CASE_NOT_OPEN"):
         add_evidence(c, case_id, url=URL_B)
 
@@ -613,9 +615,9 @@ def test_cannot_freeze_twice(direct_vm, direct_deploy, direct_alice):
     a_protocol(c)
     case_id = a_claim(c, a_rule(c))
     add_evidence(c, case_id)
-    c.freeze_evidence(case_id)
+    freeze_with_bond(c, direct_vm, case_id)
     with pytest.raises(Exception, match=r"CASE_NOT_OPEN"):
-        c.freeze_evidence(case_id)
+        freeze_with_bond(c, direct_vm, case_id)
 
 
 def test_only_reporter_may_freeze(direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -626,7 +628,7 @@ def test_only_reporter_may_freeze(direct_vm, direct_deploy, direct_alice, direct
 
     direct_vm.sender = direct_bob
     with pytest.raises(Exception, match=r"NOT_REPORTER"):
-        c.freeze_evidence(case_id)
+        freeze_with_bond(c, direct_vm, case_id)
 
 
 def test_freeze_allowed_while_paused(direct_vm, direct_deploy, direct_alice):
@@ -635,6 +637,7 @@ def test_freeze_allowed_while_paused(direct_vm, direct_deploy, direct_alice):
     a_protocol(c)
     case_id = a_claim(c, a_rule(c))
     add_evidence(c, case_id)
+    lock_bond(c, direct_vm, case_id)
 
     c.set_paused(True)
     c.freeze_evidence(case_id)
@@ -647,7 +650,7 @@ def test_case_inputs_immutable_after_freeze(direct_vm, direct_deploy, direct_ali
     rule_id = a_rule(c)
     case_id = a_claim(c, rule_id)
     e1 = add_evidence(c, case_id)
-    c.freeze_evidence(case_id)
+    freeze_with_bond(c, direct_vm, case_id)
 
     before = c.get_case(case_id)
     with pytest.raises(Exception):
@@ -676,7 +679,7 @@ def test_stale_claim_cannot_freeze(direct_vm, direct_deploy, direct_alice):
     seed_canonical_version(c, rule_id, 1, "fp_v1")
 
     with pytest.raises(Exception, match=r"STALE_CASE"):
-        c.freeze_evidence(case_id)
+        freeze_with_bond(c, direct_vm, case_id)
 
 
 def test_stale_drift_cannot_freeze(direct_vm, direct_deploy, direct_alice):
@@ -691,7 +694,7 @@ def test_stale_drift_cannot_freeze(direct_vm, direct_deploy, direct_alice):
     seed_canonical_version(c, rule_id, 4, "fp_v4")
 
     with pytest.raises(Exception, match=r"STALE_CASE"):
-        c.freeze_evidence(case_id)
+        freeze_with_bond(c, direct_vm, case_id)
 
 
 def test_invalidate_stale_case_releases_the_lock(direct_vm, direct_deploy,
@@ -816,7 +819,7 @@ def test_no_canonical_version_can_be_created_via_public_abi(direct_vm, direct_de
     rule_id = a_rule(c)
     case_id = a_claim(c, rule_id)
     add_evidence(c, case_id)
-    c.freeze_evidence(case_id)
+    freeze_with_bond(c, direct_vm, case_id)
 
     rule = c.get_rule(rule_id)
     assert rule["current_version"] == 0

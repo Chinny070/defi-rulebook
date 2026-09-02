@@ -11,14 +11,14 @@ import time
 import unicodedata
 
 # DEFI RULEBOOK - challengeable protocol commitments.
-# Stage 6: deterministic lifecycle, evidence snapshots retrieved through the
+# Stage 7: deterministic lifecycle, evidence snapshots retrieved through the
 # official GenLayer web APIs, semantic adjudication over frozen evidence,
-# challenges, finalization and immutable canonical rule versions.
-# No GEN economics.
+# challenges, finalization, immutable canonical rule versions, and native GEN
+# proposer bonds.
 
 CONTRACT_NAME = "DEFI_RULEBOOK"
-CONTRACT_VERSION = "0.6.0-stage6"
-SCHEMA_VERSION = "5"
+CONTRACT_VERSION = "0.7.0-stage7"
+SCHEMA_VERSION = "6"
 
 # ---------------------------------------------------------------------------
 # Hard caps (Stage 1 approved)
@@ -295,19 +295,25 @@ CHALLENGE_STATUSES = (
 # No PAYOUT_FAILED state: a synchronous outbound transfer failure may revert the
 # transaction, so a persisted failure status is not representable.
 BOND_STATE_NONE = "NONE"
-BOND_STATE_HELD = "HELD"
-BOND_STATE_READY_FOR_PAYOUT = "READY_FOR_PAYOUT"
+BOND_STATE_LOCKED = "LOCKED"
+BOND_STATE_REFUNDABLE = "REFUNDABLE"
+BOND_STATE_SLASHABLE = "SLASHABLE"
 BOND_STATE_SETTLED = "SETTLED"
 BOND_STATES = (
     BOND_STATE_NONE,
-    BOND_STATE_HELD,
-    BOND_STATE_READY_FOR_PAYOUT,
+    BOND_STATE_LOCKED,
+    BOND_STATE_REFUNDABLE,
+    BOND_STATE_SLASHABLE,
     BOND_STATE_SETTLED,
 )
 
-BOND_ROLE_REPORTER = "REPORTER"
-BOND_ROLE_CHALLENGER = "CHALLENGER"
-BOND_ROLES = (BOND_ROLE_REPORTER, BOND_ROLE_CHALLENGER)
+# States in which the recipients and amounts are frozen and a payout is owed.
+BOND_STATES_PAYABLE = (BOND_STATE_REFUNDABLE, BOND_STATE_SLASHABLE)
+
+# V1 has proposer bonds only. Challenger bonds, reputation and staking pools
+# are deliberately absent until separately approved.
+BOND_ROLE_PROPOSER = "PROPOSER"
+BOND_ROLES = (BOND_ROLE_PROPOSER,)
 
 BOND_DISPOSITION_PENDING = "PENDING"
 BOND_DISPOSITION_REFUND = "REFUND"
@@ -358,6 +364,12 @@ E_SELF_CHALLENGE = "[SELF_CHALLENGE]"
 E_WINDOW_NOT_EXPIRED = "[WINDOW_NOT_EXPIRED]"
 E_NO_VERDICT = "[NO_VERDICT]"
 E_VERSION_EXISTS = "[VERSION_EXISTS]"
+E_BOND_NOT_FOUND = "[BOND_NOT_FOUND]"
+E_BOND_EXISTS = "[BOND_EXISTS]"
+E_BOND_REQUIRED = "[BOND_REQUIRED]"
+E_BOND_AMOUNT = "[BOND_AMOUNT]"
+E_BOND_NOT_PAYABLE = "[BOND_NOT_PAYABLE]"
+E_BOND_LOCK_CLOSED = "[BOND_LOCK_CLOSED]"
 E_INVALID_URL = "[INVALID_URL]"
 E_INVALID_ANCHORS = "[INVALID_ANCHORS]"
 E_NOT_FROZEN = "[NOT_FROZEN]"
@@ -844,6 +856,10 @@ class BondRecord:
     slash_amount: u256
     created_at: u256
     settled_at: u256
+    # -- Stage 7 additions, appended so the storage layout stays stable --
+    refund_recipient: Address
+    slash_recipient: Address
+    locked_at: u256
 
 
 # ---------------------------------------------------------------------------
@@ -1028,6 +1044,7 @@ class DefiRulebook(gl.Contract):
         Evidence and case inputs are left untouched: closing records an
         outcome, it never rewrites history.
         """
+        self._dispose_bond(case, status)
         case.status = status
         case.invalid_reason = reason
 
@@ -1466,6 +1483,10 @@ class DefiRulebook(gl.Contract):
             _fail(E_NOT_REPORTER, "only the case reporter may freeze evidence")
         if int(case.evidence_count) < MIN_EVIDENCE_PER_CASE:
             _fail(E_MIN_EVIDENCE, "need at least " + str(MIN_EVIDENCE_PER_CASE))
+        # A case cannot reach adjudication without a bond behind it: that is
+        # what makes a claim accountable rather than free.
+        if len(case.bond_id) == 0:
+            _fail(E_BOND_REQUIRED, "lock_bond must be called first")
 
         # Stale-binding check. A RULE_CLAIM binds to version 0, a RULE_DRIFT to
         # the version it named. Either way, if the rule moved on since the case
@@ -2010,6 +2031,137 @@ class DefiRulebook(gl.Contract):
         )
         return verdict["decision"]
 
+    # -- native GEN bonds ---------------------------------------------------
+
+    def _slash_bps_for(self, case_type: str) -> u256:
+        """RULE_DRIFT is slashed at a lower rate than RULE_CLAIM.
+
+        A drift reporter who turns out to be wrong was still doing unpaid work
+        to check whether public information had gone stale. Slashing that at
+        the full rate would suppress the behaviour the Rulebook depends on,
+        while a zero slash would make spam free.
+        """
+        if case_type == CASE_TYPE_RULE_DRIFT:
+            return self.drift_slash_bps
+        return self.claim_slash_bps
+
+    def _dispose_bond(self, case: CaseRecord, outcome: str) -> None:
+        """Freeze the payout decision for a case's bond.
+
+        Called from the single case-closing path, so every terminal outcome
+        settles the bond exactly once. Recipients and amounts are written here
+        and never recomputed at payout time.
+        """
+        if len(case.bond_id) == 0:
+            return
+        bond = self.bonds[case.bond_id]
+        if bond.state != BOND_STATE_LOCKED:
+            return
+
+        amount = int(bond.amount)
+        if outcome == CASE_STATUS_REJECTED:
+            # The claim was adjudicated and not established: a partial slash.
+            slash = (amount * int(self._slash_bps_for(case.case_type))) // BPS_DENOMINATOR
+            if slash > amount:
+                slash = amount
+            bond.slash_amount = u256(slash)
+            bond.refund_amount = u256(amount - slash)
+            bond.disposition = BOND_DISPOSITION_SLASH
+            bond.state = BOND_STATE_SLASHABLE
+        else:
+            # FINALIZED, INVALIDATED and ABANDONED all refund in full. A
+            # proposer must not lose funds for a structural failure, and an
+            # established claim was right.
+            bond.slash_amount = u256(0)
+            bond.refund_amount = bond.amount
+            bond.disposition = BOND_DISPOSITION_REFUND
+            bond.state = BOND_STATE_REFUNDABLE
+
+        # Recipients are frozen now, from state, never from a caller argument.
+        bond.refund_recipient = case.reporter
+        bond.slash_recipient = self.sink_address
+
+    @gl.public.write.payable
+    def lock_bond(self, case_id: str) -> str:
+        """Lock the proposer bond for a case. The only payable entry point.
+
+        The amount is fixed by contract configuration; the caller cannot choose
+        it. Sending anything other than the exact configured amount reverts, so
+        a bond can never be used to signal conviction or buy influence.
+        """
+        self._not_paused()
+
+        case = self._get_case(case_id)
+        if case.status != CASE_STATUS_EVIDENCE_OPEN:
+            _fail(E_BOND_LOCK_CLOSED, "case is " + case.status)
+        if len(case.bond_id) > 0:
+            _fail(E_BOND_EXISTS, case.bond_id)
+
+        sent = u256(int(gl.message.value))
+        if int(sent) != int(self.case_bond):
+            _fail(
+                E_BOND_AMOUNT,
+                "expected exactly " + str(int(self.case_bond)),
+            )
+
+        bond_id = self._next_id("b", self.bond_seq)
+        self.bond_seq = u256(int(self.bond_seq) + 1)
+        now = _now()
+
+        self.bonds[bond_id] = BondRecord(
+            bond_id=bond_id,
+            case_id=case_id,
+            role=BOND_ROLE_PROPOSER,
+            depositor=gl.message.sender_address,
+            amount=sent,
+            state=BOND_STATE_LOCKED,
+            disposition=BOND_DISPOSITION_PENDING,
+            refund_amount=u256(0),
+            slash_amount=u256(0),
+            created_at=now,
+            settled_at=u256(0),
+            refund_recipient=case.reporter,
+            slash_recipient=self.sink_address,
+            locked_at=now,
+        )
+        case.bond_id = bond_id
+        return bond_id
+
+    @gl.public.write
+    def execute_payout(self, case_id: str) -> str:
+        """Pay out a settled bond. Permissionless, and allowed while paused.
+
+        Pause must never trap funds: once a payout is owed it can always be
+        executed. The recipients and amounts were frozen at disposition time,
+        so nothing about this call can redirect or resize the payment - there
+        is deliberately no recipient argument.
+
+        SETTLED is written before the transfers are emitted and is terminal,
+        so a bond can be paid exactly once.
+        """
+        case = self._get_case(case_id)
+        if len(case.bond_id) == 0:
+            _fail(E_BOND_NOT_FOUND, "case has no bond")
+        bond = self.bonds[case.bond_id]
+        if bond.state not in BOND_STATES_PAYABLE:
+            _fail(E_BOND_NOT_PAYABLE, "bond is " + bond.state)
+
+        refund = int(bond.refund_amount)
+        slash = int(bond.slash_amount)
+        refund_to = bond.refund_recipient
+        slash_to = bond.slash_recipient
+
+        # Terminal state first: after this line no second payout is reachable,
+        # and if anything below reverts the whole transaction unwinds together.
+        bond.state = BOND_STATE_SETTLED
+        bond.settled_at = _now()
+
+        if refund > 0:
+            gl.get_contract_at(refund_to).emit_transfer(value=u256(refund))
+        if slash > 0:
+            gl.get_contract_at(slash_to).emit_transfer(value=u256(slash))
+        return BOND_STATE_SETTLED
+
     # -- challenges ---------------------------------------------------------
 
     def _latest_verdict_id(self, case_id: str) -> str:
@@ -2427,6 +2579,7 @@ class DefiRulebook(gl.Contract):
             "case_fingerprint_scheme": CASE_FP_SCHEME,
             "snapshot_fingerprint_scheme": SNAPSHOT_FP_SCHEME,
             "version_fingerprint_scheme": VERSION_FP_SCHEME,
+            "bond_required_before_freeze": True,
             "excerpt_lead_chars": EXCERPT_LEAD_CHARS,
             "max_snapshot_attempts": MAX_SNAPSHOT_ATTEMPTS,
             "render_wait": RENDER_WAIT,
@@ -2616,6 +2769,71 @@ class DefiRulebook(gl.Contract):
             out.append(self.get_verdict(ids[index]))
             index = index + 1
         return out
+
+    def _bond_view(self, record: BondRecord) -> dict:
+        return {
+            "bond_id": record.bond_id,
+            "case_id": record.case_id,
+            "role": record.role,
+            "depositor": record.depositor.as_hex,
+            "amount": str(int(record.amount)),
+            "state": record.state,
+            "disposition": record.disposition,
+            "refund_amount": str(int(record.refund_amount)),
+            "slash_amount": str(int(record.slash_amount)),
+            "refund_recipient": record.refund_recipient.as_hex,
+            "slash_recipient": record.slash_recipient.as_hex,
+            "locked_at": int(record.locked_at),
+            "settled_at": int(record.settled_at),
+            "payout_owed": record.state in BOND_STATES_PAYABLE,
+        }
+
+    @gl.public.view
+    def get_bond_state(self, case_id: str) -> dict:
+        case = self._get_case(case_id)
+        if len(case.bond_id) == 0:
+            return {
+                "case_id": case_id,
+                "has_bond": False,
+                "state": BOND_STATE_NONE,
+                "required_amount": str(int(self.case_bond)),
+            }
+        view = self._bond_view(self.bonds[case.bond_id])
+        view["has_bond"] = True
+        view["required_amount"] = str(int(self.case_bond))
+        return view
+
+    @gl.public.view
+    def list_case_bonds(self, case_id: str, offset: u256, limit: u256) -> list[dict]:
+        """V1 has exactly one bond per case; the list shape keeps the read
+        surface stable if challenger bonds are approved later."""
+        case = self._get_case(case_id)
+        ids = []
+        if len(case.bond_id) > 0:
+            ids.append(str(case.bond_id))
+        start, end = _page_bounds(offset, limit, len(ids))
+        out = []
+        index = start
+        while index < end:
+            out.append(self._bond_view(self.bonds[ids[index]]))
+            index = index + 1
+        return out
+
+    @gl.public.view
+    def get_economic_config(self) -> dict:
+        return {
+            "case_bond": str(int(self.case_bond)),
+            "bond_is_fixed_by_config": True,
+            "caller_selected_amounts": False,
+            "claim_slash_bps": int(self.claim_slash_bps),
+            "drift_slash_bps": int(self.drift_slash_bps),
+            "bps_denominator": BPS_DENOMINATOR,
+            "slash_recipient": self.sink_address.as_hex,
+            "challenger_bonds": False,
+            "bond_visible_to_adjudication": False,
+            "bond_states": list(BOND_STATES),
+            "bond_roles": list(BOND_ROLES),
+        }
 
     @gl.public.view
     def get_challenge(self, challenge_id: str) -> dict:

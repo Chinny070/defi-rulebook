@@ -33,8 +33,8 @@ def test_config_reports_identity_and_versions(direct_vm, direct_deploy, direct_a
     c = direct_deploy(CONTRACT)
     cfg = c.get_config()
     assert cfg["contract_name"] == "DEFI_RULEBOOK"
-    assert cfg["contract_version"] == "0.6.0-stage6"
-    assert cfg["schema_version"] == "5"
+    assert cfg["contract_version"] == "0.7.0-stage7"
+    assert cfg["schema_version"] == "6"
     assert cfg["dimension_set_version"] == "1"
     assert cfg["case_fingerprint_scheme"] == "DRB-CASE-FP-v1"
 
@@ -184,7 +184,9 @@ def test_bond_states_exclude_payout_failed(direct_vm, direct_deploy, direct_alic
     direct_vm.sender = direct_alice
     c = direct_deploy(CONTRACT)
     states = c.get_vocabularies()["bond_states"]
-    assert states == ["NONE", "HELD", "READY_FOR_PAYOUT", "SETTLED"]
+    assert states == ["NONE", "LOCKED", "REFUNDABLE", "SLASHABLE", "SETTLED"]
+    # emit_transfer is an asynchronous message that never reports failure, so
+    # a persisted failure state would be unreachable by construction.
     assert "PAYOUT_FAILED" not in states
 
 
