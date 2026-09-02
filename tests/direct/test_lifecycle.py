@@ -827,7 +827,7 @@ def test_no_canonical_version_can_be_created_via_public_abi(direct_vm, direct_de
 
 def test_later_stage_methods_are_absent(direct_vm, direct_deploy, direct_alice):
     c = deploy(direct_vm, direct_deploy, direct_alice)
-    for name in ["snapshot_evidence", "adjudicate", "readjudicate", "challenge",
+    for name in ["adjudicate", "readjudicate", "challenge",
                  "finalize", "settle_bond", "set_rule_version", "admin_set_rule",
                  "force_establish", "accept_claim"]:
         assert not hasattr(c, name), f"Stage 3 must not expose {name}"

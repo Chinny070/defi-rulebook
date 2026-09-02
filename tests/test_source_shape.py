@@ -35,6 +35,11 @@ def test_source_is_pure_ascii():
         )
 
 
+def test_line_endings_are_lf_only():
+    """CRLF is easy to reintroduce accidentally on Windows; catch it here."""
+    assert b"\r\n" not in RAW
+
+
 def test_no_smart_quotes_or_decorative_unicode():
     for bad in ["‘", "’", "“", "”", "–", "—",
                 "→", "←", "✓", " "]:
@@ -111,7 +116,8 @@ def test_no_backend_or_scraping_imports():
 
 def test_import_allowlist():
     """Only modules the GenVM linter permits, plus the SDK itself."""
-    allowed = {"genlayer", "dataclasses", "hashlib", "time", "urllib.parse"}
+    allowed = {"genlayer", "dataclasses", "hashlib", "time", "unicodedata",
+               "urllib.parse"}
     assert _imported_modules() <= allowed, _imported_modules() - allowed
 
 
@@ -121,10 +127,60 @@ def test_urllib_is_only_the_parse_submodule():
         assert banned not in TEXT
 
 
-def test_no_web_or_adjudication_calls_in_stage_2():
-    for call in ["gl.nondet.web", "gl.eq_principle", "gl.nondet.exec_prompt",
-                 "gl.vm.run_nondet", "exec_prompt("]:
-        assert call not in TEXT, f"Stage 2 must not contain {call}"
+def test_no_adjudication_calls_yet():
+    """Web retrieval is allowed from Stage 4; model adjudication is not."""
+    for call in ["gl.nondet.exec_prompt", "exec_prompt(", "gl.vm.run_nondet",
+                 "prompt_comparative", "prompt_non_comparative", "gl.nondet.image"]:
+        assert call not in TEXT, f"adjudication must not appear yet: {call}"
+
+
+def test_web_retrieval_is_confined_to_the_snapshot_path():
+    """Exactly one nondet block, inside snapshot_evidence."""
+    tree = ast.parse(TEXT)
+    web_calls = [
+        n.lineno for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and "gl.nondet.web" in ast.unparse(n.func)
+    ]
+    eq_calls = [
+        n.lineno for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and "eq_principle" in ast.unparse(n.func)
+    ]
+    assert len(eq_calls) == 1, f"expected one equivalence block, got {eq_calls}"
+
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "snapshot_evidence"
+    )
+    lo, hi = fn.lineno, max(x.lineno for x in ast.walk(fn) if hasattr(x, "lineno"))
+    for line in web_calls + eq_calls:
+        assert lo <= line <= hi, f"web/equivalence call at line {line} is outside snapshot_evidence"
+
+
+def test_equivalence_is_not_applied_to_a_whole_page():
+    """strict_eq must wrap the extraction, never the raw retrieved text.
+
+    Stage 1 rejected exact equality over a full page: dynamic pages differ
+    between validators and would manufacture avoidable Undetermined results.
+    """
+    tree = ast.parse(TEXT)
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "retrieve"
+    )
+    body = ast.unparse(fn)
+    assert "_normalize_text" in body
+    assert "_extract_excerpt" in body
+    # The raw response must never be returned straight out of the block.
+    assert "return raw" not in body
+    assert "return response.body" not in body
+
+
+def test_render_is_text_mode_only():
+    """html and screenshot modes are not used: they enlarge the surface for
+    no V1 benefit."""
+    assert 'mode="html"' not in TEXT
+    assert "mode='html'" not in TEXT
+    assert "screenshot" not in TEXT
 
 
 def test_no_payout_execution_yet():

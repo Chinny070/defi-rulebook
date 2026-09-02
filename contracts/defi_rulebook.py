@@ -7,14 +7,16 @@ from urllib.parse import urlsplit, urlunsplit
 
 import hashlib
 import time
+import unicodedata
 
 # DEFI RULEBOOK - challengeable protocol commitments.
-# Stage 3: deterministic lifecycle through evidence freeze.
-# No web retrieval, no adjudication, no canonical versions, no payouts.
+# Stage 4: deterministic lifecycle, plus evidence snapshots retrieved through
+# the official GenLayer web APIs. No adjudication, no canonical versions,
+# no challenges, no payouts.
 
 CONTRACT_NAME = "DEFI_RULEBOOK"
-CONTRACT_VERSION = "0.3.0-stage3"
-SCHEMA_VERSION = "2"
+CONTRACT_VERSION = "0.4.0-stage4"
+SCHEMA_VERSION = "3"
 
 # ---------------------------------------------------------------------------
 # Hard caps (Stage 1 approved)
@@ -197,6 +199,46 @@ EVIDENCE_STATES = (
     EVIDENCE_STATE_FAILED,
 )
 
+# Snapshot lifecycle. There is no state that makes a failed retrieval look
+# usable: only SNAPSHOT_COMPLETE carries an excerpt a later stage may read.
+SNAPSHOT_STATUS_NONE = "UNSNAPSHOTTED"
+SNAPSHOT_STATUS_COMPLETE = "SNAPSHOT_COMPLETE"
+SNAPSHOT_STATUS_FAILED = "SNAPSHOT_FAILED"
+SNAPSHOT_STATUSES = (
+    SNAPSHOT_STATUS_NONE,
+    SNAPSHOT_STATUS_COMPLETE,
+    SNAPSHOT_STATUS_FAILED,
+)
+
+# Why a retrieval produced no usable excerpt. Deterministic reasons agree
+# across validators; transient ones may not, which is why they stay retryable.
+SNAP_FAIL_NONE = ""
+SNAP_FAIL_HTTP_ERROR = "HTTP_ERROR"
+SNAP_FAIL_EMPTY_BODY = "EMPTY_BODY"
+SNAP_FAIL_EMPTY_CONTENT = "EMPTY_CONTENT"
+SNAP_FAIL_NO_ANCHOR = "NO_ANCHOR"
+SNAP_FAIL_RETRIEVAL_ERROR = "RETRIEVAL_ERROR"
+SNAPSHOT_FAILURE_REASONS = (
+    SNAP_FAIL_HTTP_ERROR,
+    SNAP_FAIL_EMPTY_BODY,
+    SNAP_FAIL_EMPTY_CONTENT,
+    SNAP_FAIL_NO_ANCHOR,
+    SNAP_FAIL_RETRIEVAL_ERROR,
+)
+
+# Retrieval / extraction parameters. These are bound into the snapshot
+# fingerprint, so changing one changes every fingerprint it produced.
+EXCERPT_LEAD_CHARS = 200
+RENDER_WAIT = "2s"
+MAX_SNAPSHOT_ATTEMPTS = 3
+
+# Internal channel markers for the value returned out of a nondet block.
+# Normalization strips every control character below 0x20, so neither marker
+# can ever occur inside retrieved content.
+SNAP_OK = "OK"
+SNAP_ERR = "ERR"
+SNAP_SEP = "\x1e"
+
 CHALLENGE_GROUNDS = (
     "AUTHORITATIVE_EVIDENCE_MISCLASSIFIED",
     "TEMPORAL_ORDERING_ERROR",
@@ -276,6 +318,9 @@ E_DUPLICATE_EVIDENCE = "[DUPLICATE_EVIDENCE]"
 E_EVIDENCE_NOT_FOUND = "[EVIDENCE_NOT_FOUND]"
 E_INVALID_URL = "[INVALID_URL]"
 E_INVALID_ANCHORS = "[INVALID_ANCHORS]"
+E_NOT_FROZEN = "[NOT_FROZEN]"
+E_ALREADY_SNAPSHOTTED = "[ALREADY_SNAPSHOTTED]"
+E_SNAPSHOT_ATTEMPTS = "[SNAPSHOT_ATTEMPTS]"
 E_STALE_CASE = "[STALE_CASE]"
 E_NOT_STALE = "[NOT_STALE]"
 E_WINDOW_OPEN = "[WINDOW_OPEN]"
@@ -283,6 +328,7 @@ E_WINDOW_OPEN = "[WINDOW_OPEN]"
 # Case fingerprint scheme. Versioned because Stage 5 will extend the preimage
 # with per-evidence snapshot fingerprints once retrieval exists.
 CASE_FP_SCHEME = "DRB-CASE-FP-v1"
+SNAPSHOT_FP_SCHEME = "DRB-SNAP-FP-v1"
 FP_FIELD_SEP = "|"
 FP_ANCHOR_SEP = "\x1f"
 
@@ -467,6 +513,101 @@ def _title_key(protocol_id: str, category: str, title: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Snapshot normalization and extraction.
+#
+# These run INSIDE the nondet block, before any equivalence check, so that
+# validators compare a small stable excerpt rather than a whole page. They are
+# pure functions of the retrieved text and the frozen extraction parameters:
+# no storage, no clock, no model, no randomness.
+# ---------------------------------------------------------------------------
+
+
+def _normalize_text(raw: str) -> str:
+    """Canonical text form. Identical input always gives identical output.
+
+    1. NFKC-normalize, so visually identical text has one representation
+    2. drop every control character below 0x20 and the 0x7f delete character,
+       which also guarantees the channel markers cannot appear in content
+    3. map non-breaking space to a plain space
+    4. collapse every whitespace run to a single space
+    5. strip leading and trailing whitespace
+    """
+    folded = unicodedata.normalize("NFKC", raw)
+    cleaned = []
+    for ch in folded:
+        point = ord(ch)
+        if point < 0x20 or point == 0x7F:
+            cleaned.append(" ")
+        elif point == 0xA0:
+            cleaned.append(" ")
+        else:
+            cleaned.append(ch)
+    return _collapse_ws("".join(cleaned))
+
+
+def _find_anchor(text: str, anchors: list) -> int:
+    """Index of the first frozen anchor that occurs in the text, else -1.
+
+    Anchors are tried in their frozen order and matched case-insensitively.
+    First match wins, so the result never depends on which anchor a validator
+    happened to look at first.
+    """
+    haystack = text.lower()
+    for anchor in anchors:
+        position = haystack.find(anchor.lower())
+        if position >= 0:
+            return position
+    return -1
+
+
+def _extract_excerpt(text: str, anchors: list) -> str:
+    """Bounded window around the first matching anchor.
+
+    The window starts EXCERPT_LEAD_CHARS before the anchor so the excerpt
+    carries the sentence that introduces it, and runs to at most
+    MAX_EXCERPT_LEN characters. Slicing is by code point, never by byte.
+    Returns "" when no anchor matches; the caller turns that into NO_ANCHOR.
+    """
+    position = _find_anchor(text, anchors)
+    if position < 0:
+        return ""
+    start = position - EXCERPT_LEAD_CHARS
+    if start < 0:
+        start = 0
+    end = start + MAX_EXCERPT_LEN
+    if end > len(text):
+        end = len(text)
+    return text[start:end]
+
+
+def _snapshot_fingerprint(
+    evidence_id: str,
+    url_key: str,
+    retrieval_mode: str,
+    anchors: list,
+    excerpt: str,
+) -> str:
+    """Bind the excerpt to the identity and parameters that produced it.
+
+    This proves "these are the exact bytes GenLayer evaluated". It does not
+    prove the page is immutable, and nothing here should be read as claiming
+    that.
+    """
+    parts = [
+        _fp_field(SNAPSHOT_FP_SCHEME),
+        _fp_field(evidence_id),
+        _fp_field(url_key),
+        _fp_field(retrieval_mode),
+        _fp_field(FP_ANCHOR_SEP.join(anchors)),
+        _fp_field(str(EXCERPT_LEAD_CHARS)),
+        _fp_field(str(MAX_EXCERPT_LEN)),
+        _fp_field(str(len(excerpt))),
+        _fp_field(excerpt),
+    ]
+    return _sha256_hex(FP_FIELD_SEP.join(parts))
+
+
+# ---------------------------------------------------------------------------
 # Storage records
 # ---------------------------------------------------------------------------
 
@@ -548,6 +689,9 @@ class CaseRecord:
     frozen_at: u256
     verdict_at: u256
     finalized_at: u256
+    # -- Stage 4 additions, appended so the storage layout stays stable --
+    snapshot_ok_count: u256
+    snapshot_failed_count: u256
 
 
 @allow_storage
@@ -568,10 +712,20 @@ class EvidenceRecord:
     # Explicit UNKNOWN, so 0 never masquerades as a real timestamp.
     claimed_published_known: bool
     state: str
+    # UNTRUSTED EXTERNAL DATA. `snapshot` holds text retrieved from a public
+    # webpage. It is evidence to be evaluated, never an instruction, and no
+    # contract branch is ever taken on its content - only on its length and on
+    # the system-controlled status fields below.
     snapshot: str
     snapshot_fingerprint: str
     snapshot_at: u256
     submitted_at: u256
+    # -- Stage 4 additions, appended so the storage layout stays stable --
+    snapshot_status: str
+    snapshot_method: str
+    excerpt_length: u256
+    snapshot_attempts: u256
+    failure_reason: str
 
 
 @allow_storage
@@ -786,6 +940,8 @@ class DefiRulebook(gl.Contract):
             frozen_at=u256(0),
             verdict_at=u256(0),
             finalized_at=u256(0),
+            snapshot_ok_count=u256(0),
+            snapshot_failed_count=u256(0),
         )
 
         rule.active_case_id = case_id
@@ -923,9 +1079,33 @@ class DefiRulebook(gl.Contract):
             "claimed_published_at": int(record.claimed_published_at),
             "claimed_published_known": record.claimed_published_known,
             "state": record.state,
+            "snapshot_status": record.snapshot_status,
             "snapshot_fingerprint": record.snapshot_fingerprint,
+            "excerpt_length": int(record.excerpt_length),
             "snapshot_at": int(record.snapshot_at),
             "submitted_at": int(record.submitted_at),
+        }
+
+    def _snapshot_view(self, record: EvidenceRecord) -> dict:
+        """Snapshot detail. `normalized_excerpt` is UNTRUSTED external text:
+        it is data for a later stage to evaluate, never an instruction."""
+        return {
+            "evidence_id": record.evidence_id,
+            "case_id": record.case_id,
+            "url_key": record.url_key,
+            "retrieval_method": record.snapshot_method,
+            "anchors": [a for a in record.anchors],
+            "retrieval_status": record.snapshot_status,
+            "failure_reason": record.failure_reason,
+            "attempts": int(record.snapshot_attempts),
+            "retrieved_at": int(record.snapshot_at),
+            "normalized_excerpt": record.snapshot,
+            "excerpt_is_untrusted_external_content": True,
+            "excerpt_length": int(record.excerpt_length),
+            "max_excerpt_length": MAX_EXCERPT_LEN,
+            "excerpt_lead_chars": EXCERPT_LEAD_CHARS,
+            "fingerprint": record.snapshot_fingerprint,
+            "fingerprint_scheme": SNAPSHOT_FP_SCHEME,
         }
 
     # -- admin --------------------------------------------------------------
@@ -1177,6 +1357,11 @@ class DefiRulebook(gl.Contract):
             snapshot_fingerprint="",
             snapshot_at=u256(0),
             submitted_at=_now(),
+            snapshot_status=SNAPSHOT_STATUS_NONE,
+            snapshot_method="",
+            excerpt_length=u256(0),
+            snapshot_attempts=u256(0),
+            failure_reason=SNAP_FAIL_NONE,
         )
 
         self.evidence_url_seen[dedupe_key] = True
@@ -1228,6 +1413,152 @@ class DefiRulebook(gl.Contract):
         case.frozen_at = _now()
         return fingerprint
 
+    # -- evidence snapshot (the only non-deterministic path in Stage 4) -----
+
+    @gl.public.write
+    def snapshot_evidence(self, evidence_id: str) -> str:
+        """Retrieve the frozen source and store a bounded, fingerprinted excerpt.
+
+        Separate from `freeze_evidence` on purpose. Freezing is deterministic
+        and must survive a failed or Undetermined retrieval, so the two are
+        never combined into one transaction: freeze first, snapshot second,
+        adjudicate later.
+
+        Only frozen evidence can be snapshotted, and only the URL, retrieval
+        mode and anchors frozen with the case are used. No link discovered in
+        the page is ever followed, and no other source is ever consulted.
+
+        Returns the snapshot status. A failed retrieval is recorded as
+        SNAPSHOT_FAILED and never produces a usable excerpt.
+        """
+        if evidence_id not in self.evidence:
+            _fail(E_EVIDENCE_NOT_FOUND, evidence_id)
+        item = self.evidence[evidence_id]
+
+        case = self._get_case(item.case_id)
+        if case.status != CASE_STATUS_EVIDENCE_FROZEN:
+            _fail(E_NOT_FROZEN, "case is " + case.status)
+        if item.snapshot_status == SNAPSHOT_STATUS_COMPLETE:
+            _fail(E_ALREADY_SNAPSHOTTED, evidence_id)
+        if int(item.snapshot_attempts) >= MAX_SNAPSHOT_ATTEMPTS:
+            _fail(E_SNAPSHOT_ATTEMPTS, "reached " + str(MAX_SNAPSHOT_ATTEMPTS))
+
+        # Belt and braces: the evidence must be in the case's frozen set, so a
+        # record cannot be snapshotted into a case it was never bound to.
+        in_frozen_set = False
+        for frozen_id in case.frozen_evidence_ids:
+            if frozen_id == evidence_id:
+                in_frozen_set = True
+        if not in_frozen_set:
+            _fail(E_NOT_FROZEN, "evidence is not in the frozen set")
+
+        # Copy the frozen parameters into plain locals BEFORE the nondet block.
+        # Storage is not read inside it, and nothing inside it can write.
+        # str() is required, not cosmetic: storage strings are proxy objects
+        # and passing one to the web API fails inside the block.
+        url = str(item.url_key)
+        mode = str(item.retrieval_mode)
+        anchors = [str(a) for a in item.anchors]
+
+        def retrieve() -> str:
+            """Runs on every validator. Pure function of the page and the
+            frozen parameters; returns a small tagged string, never raw HTML."""
+            # The try covers ONLY the network call. Normalization and
+            # extraction stay outside it, so a deterministic bug in our own
+            # code can never be silently reported as a transient network
+            # failure.
+            raw = ""
+            if mode == RETRIEVAL_GET:
+                try:
+                    response = gl.nondet.web.get(url)
+                except Exception:
+                    return SNAP_ERR + SNAP_SEP + SNAP_FAIL_RETRIEVAL_ERROR
+                if response.status < 200 or response.status >= 300:
+                    return SNAP_ERR + SNAP_SEP + SNAP_FAIL_HTTP_ERROR
+                if response.body is None:
+                    return SNAP_ERR + SNAP_SEP + SNAP_FAIL_EMPTY_BODY
+                raw = response.body.decode("utf-8", errors="replace")
+            elif mode == RETRIEVAL_RENDER_TEXT_WAIT:
+                try:
+                    raw = gl.nondet.web.render(
+                        url, mode="text", wait_after_loaded=RENDER_WAIT
+                    )
+                except Exception:
+                    return SNAP_ERR + SNAP_SEP + SNAP_FAIL_RETRIEVAL_ERROR
+            else:
+                try:
+                    raw = gl.nondet.web.render(url, mode="text")
+                except Exception:
+                    return SNAP_ERR + SNAP_SEP + SNAP_FAIL_RETRIEVAL_ERROR
+
+            normalized = _normalize_text(raw)
+            if len(normalized) == 0:
+                return SNAP_ERR + SNAP_SEP + SNAP_FAIL_EMPTY_CONTENT
+
+            excerpt = _extract_excerpt(normalized, anchors)
+            if len(excerpt) == 0:
+                return SNAP_ERR + SNAP_SEP + SNAP_FAIL_NO_ANCHOR
+            return SNAP_OK + SNAP_SEP + excerpt
+
+        # Equivalence is applied to the bounded excerpt, never to the whole
+        # page: validators must agree on the evidence, not on navigation
+        # chrome, banners, counters or analytics text.
+        outcome = gl.eq_principle.strict_eq(retrieve)
+
+        # Counts track the CURRENT status of each evidence item, not attempts,
+        # so a retry that finally succeeds moves the item between buckets
+        # instead of being counted twice.
+        previous_status = item.snapshot_status
+        item.snapshot_attempts = u256(int(item.snapshot_attempts) + 1)
+        item.snapshot_method = mode
+
+        # Split on the separator rather than a fixed offset: the markers are
+        # different lengths, and normalization guarantees the separator cannot
+        # occur inside retrieved content, so the first one always delimits.
+        separator_at = outcome.find(SNAP_SEP)
+        if separator_at < 0:
+            marker = SNAP_ERR
+            payload = SNAP_FAIL_RETRIEVAL_ERROR
+        else:
+            marker = outcome[:separator_at]
+            payload = outcome[separator_at + len(SNAP_SEP) :]
+
+        if marker != SNAP_OK:
+            reason = payload
+            if reason not in SNAPSHOT_FAILURE_REASONS:
+                reason = SNAP_FAIL_RETRIEVAL_ERROR
+            item.snapshot = ""
+            item.snapshot_fingerprint = ""
+            item.excerpt_length = u256(0)
+            item.snapshot_status = SNAPSHOT_STATUS_FAILED
+            item.failure_reason = reason
+            item.state = EVIDENCE_STATE_FAILED
+            item.snapshot_at = _now()
+            if previous_status != SNAPSHOT_STATUS_FAILED:
+                case.snapshot_failed_count = u256(int(case.snapshot_failed_count) + 1)
+            return SNAPSHOT_STATUS_FAILED
+
+        excerpt = payload
+        if len(excerpt) > MAX_EXCERPT_LEN:
+            excerpt = excerpt[:MAX_EXCERPT_LEN]
+
+        # The stored bytes, the hashed bytes and the bytes a later stage reads
+        # are one and the same string.
+        item.snapshot = excerpt
+        item.snapshot_fingerprint = _snapshot_fingerprint(
+            evidence_id, url, mode, anchors, excerpt
+        )
+        item.excerpt_length = u256(len(excerpt))
+        item.snapshot_status = SNAPSHOT_STATUS_COMPLETE
+        item.failure_reason = SNAP_FAIL_NONE
+        item.state = EVIDENCE_STATE_SNAPSHOTTED
+        item.snapshot_at = _now()
+
+        if previous_status == SNAPSHOT_STATUS_FAILED:
+            case.snapshot_failed_count = u256(int(case.snapshot_failed_count) - 1)
+        case.snapshot_ok_count = u256(int(case.snapshot_ok_count) + 1)
+        return SNAPSHOT_STATUS_COMPLETE
+
     # -- deterministic exits (no adjudication, no economics) ----------------
 
     @gl.public.write
@@ -1274,6 +1605,10 @@ class DefiRulebook(gl.Contract):
             "schema_version": SCHEMA_VERSION,
             "dimension_set_version": DIMENSION_SET_VERSION,
             "case_fingerprint_scheme": CASE_FP_SCHEME,
+            "snapshot_fingerprint_scheme": SNAPSHOT_FP_SCHEME,
+            "excerpt_lead_chars": EXCERPT_LEAD_CHARS,
+            "max_snapshot_attempts": MAX_SNAPSHOT_ATTEMPTS,
+            "render_wait": RENDER_WAIT,
             "owner": self.owner.as_hex,
             "sink_address": self.sink_address.as_hex,
             "paused": self.paused,
@@ -1328,6 +1663,8 @@ class DefiRulebook(gl.Contract):
             "weak_evidence_types": list(WEAK_EVIDENCE_TYPES),
             "retrieval_modes": list(RETRIEVAL_MODES),
             "evidence_states": list(EVIDENCE_STATES),
+            "snapshot_statuses": list(SNAPSHOT_STATUSES),
+            "snapshot_failure_reasons": list(SNAPSHOT_FAILURE_REASONS),
             "challenge_grounds": list(CHALLENGE_GROUNDS),
             "challenge_statuses": list(CHALLENGE_STATUSES),
             "bond_states": list(BOND_STATES),
@@ -1414,6 +1751,73 @@ class DefiRulebook(gl.Contract):
             out.append(self._evidence_view(self.evidence[ids[index]]))
             index = index + 1
         return out
+
+    @gl.public.view
+    def get_evidence_snapshot(self, evidence_id: str) -> dict:
+        if evidence_id not in self.evidence:
+            _fail(E_EVIDENCE_NOT_FOUND, evidence_id)
+        return self._snapshot_view(self.evidence[evidence_id])
+
+    @gl.public.view
+    def list_case_snapshots(self, case_id: str, offset: u256, limit: u256) -> list[dict]:
+        case = self._get_case(case_id)
+        ids = case.frozen_evidence_ids
+        if len(ids) == 0:
+            ids = self.evidence_by_case[case_id]
+        start, end = _page_bounds(offset, limit, len(ids))
+        out = []
+        index = start
+        while index < end:
+            out.append(self._snapshot_view(self.evidence[ids[index]]))
+            index = index + 1
+        return out
+
+    @gl.public.view
+    def get_case_snapshot_status(self, case_id: str) -> dict:
+        """Retrieval progress for a frozen case.
+
+        `ready_for_adjudication` means every frozen item reached a terminal
+        snapshot state and at least one produced a usable excerpt. It is a
+        readiness signal only - no adjudication exists yet.
+        """
+        case = self._get_case(case_id)
+        total = len(case.frozen_evidence_ids)
+        ok = int(case.snapshot_ok_count)
+        failed = int(case.snapshot_failed_count)
+        return {
+            "case_id": case.case_id,
+            "status": case.status,
+            "frozen_evidence_count": total,
+            "snapshot_complete": ok,
+            "snapshot_failed": failed,
+            "snapshot_pending": total - ok - failed,
+            "ready_for_adjudication": total > 0 and ok > 0 and (ok + failed) == total,
+        }
+
+    @gl.public.view
+    def get_case_snapshot_digest(self, case_id: str) -> dict:
+        """Digest over the completed snapshot fingerprints, in frozen order.
+
+        Stage 5 will bind adjudication output to this alongside the case
+        fingerprint, so a verdict cannot be replayed against a different
+        evidence set. It is derived, never stored.
+        """
+        case = self._get_case(case_id)
+        parts = [_fp_field(SNAPSHOT_FP_SCHEME), _fp_field(case.case_fingerprint)]
+        counted = 0
+        for evidence_id in case.frozen_evidence_ids:
+            item = self.evidence[evidence_id]
+            if item.snapshot_status != SNAPSHOT_STATUS_COMPLETE:
+                continue
+            parts.append(_fp_field(item.evidence_id))
+            parts.append(_fp_field(item.snapshot_fingerprint))
+            counted = counted + 1
+        return {
+            "case_id": case.case_id,
+            "case_fingerprint": case.case_fingerprint,
+            "snapshot_count": counted,
+            "snapshot_set_digest": _sha256_hex(FP_FIELD_SEP.join(parts)),
+        }
 
     @gl.public.view
     def get_case_frozen_evidence(self, case_id: str) -> dict:

@@ -33,8 +33,8 @@ def test_config_reports_identity_and_versions(direct_vm, direct_deploy, direct_a
     c = direct_deploy(CONTRACT)
     cfg = c.get_config()
     assert cfg["contract_name"] == "DEFI_RULEBOOK"
-    assert cfg["contract_version"] == "0.3.0-stage3"
-    assert cfg["schema_version"] == "2"
+    assert cfg["contract_version"] == "0.4.0-stage4"
+    assert cfg["schema_version"] == "3"
     assert cfg["dimension_set_version"] == "1"
     assert cfg["case_fingerprint_scheme"] == "DRB-CASE-FP-v1"
 
@@ -311,7 +311,6 @@ def test_no_placeholder_business_methods_are_exposed(
     c = direct_deploy(CONTRACT)
 
     not_yet = [
-        "snapshot_evidence",
         "adjudicate",
         "readjudicate",
         "challenge",
