@@ -3,15 +3,18 @@
 from genlayer import *
 
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 
+import hashlib
 import time
 
 # DEFI RULEBOOK - challengeable protocol commitments.
-# Stage 2: storage foundation only. No adjudication, no web access, no payouts.
+# Stage 3: deterministic lifecycle through evidence freeze.
+# No web retrieval, no adjudication, no canonical versions, no payouts.
 
 CONTRACT_NAME = "DEFI_RULEBOOK"
-CONTRACT_VERSION = "0.2.0-stage2"
-SCHEMA_VERSION = "1"
+CONTRACT_VERSION = "0.3.0-stage3"
+SCHEMA_VERSION = "2"
 
 # ---------------------------------------------------------------------------
 # Hard caps (Stage 1 approved)
@@ -22,23 +25,31 @@ MAX_RULES_PER_PROTOCOL = 100
 MAX_VERSIONS_PER_RULE = 50
 MAX_CASES_PER_RULE = 50
 MAX_EVIDENCE_PER_CASE = 8
+MIN_EVIDENCE_PER_CASE = 1
 MAX_EVIDENCE_PER_SOURCE_KEY = 3
 MAX_CHALLENGES_PER_CASE = 2
 MAX_VERDICTS_PER_CASE = 3
 
 MAX_PROTOCOL_ID_LEN = 64
+MIN_PROTOCOL_ID_LEN = 2
 MAX_RULE_ID_LEN = 80
 MAX_DISPLAY_NAME_LEN = 80
 MAX_URL_LEN = 400
 MAX_SOURCE_KEY_LEN = 120
 MAX_TITLE_LEN = 120
+MIN_TITLE_LEN = 4
 MAX_RULE_TEXT_LEN = 600
+MIN_RULE_TEXT_LEN = 8
 MAX_SCOPE_LEN = 200
 MAX_EXCEPTIONS_LEN = 300
 MAX_EFFECTIVE_BASIS_LEN = 120
 MAX_RELEVANCE_NOTE_LEN = 300
+MIN_RELEVANCE_NOTE_LEN = 4
 MAX_ANCHORS_LEN = 200
 MAX_ANCHOR_COUNT = 3
+MIN_ANCHOR_COUNT = 1
+MAX_ANCHOR_LEN = 60
+MIN_ANCHOR_LEN = 3
 MAX_EXCERPT_LEN = 2000
 MAX_DIMENSION_REASON_LEN = 240
 MAX_VERDICT_SUMMARY_LEN = 400
@@ -48,7 +59,7 @@ DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 50
 
 # ---------------------------------------------------------------------------
-# Economic configuration (values only; no payout logic in Stage 2)
+# Economic configuration (values only; no payout logic before Stage 10)
 # ---------------------------------------------------------------------------
 
 DEFAULT_CASE_BOND = 1000000000000000000
@@ -69,7 +80,6 @@ CASE_TYPE_RULE_CLAIM = "RULE_CLAIM"
 CASE_TYPE_RULE_DRIFT = "RULE_DRIFT"
 CASE_TYPES = (CASE_TYPE_RULE_CLAIM, CASE_TYPE_RULE_DRIFT)
 
-CASE_STATUS_OPEN = "OPEN"
 CASE_STATUS_EVIDENCE_OPEN = "EVIDENCE_OPEN"
 CASE_STATUS_EVIDENCE_FROZEN = "EVIDENCE_FROZEN"
 CASE_STATUS_VERDICT_PROPOSED = "VERDICT_PROPOSED"
@@ -78,7 +88,6 @@ CASE_STATUS_FINALIZED = "FINALIZED"
 CASE_STATUS_INVALIDATED = "INVALIDATED"
 CASE_STATUS_ABANDONED = "ABANDONED"
 CASE_STATUSES = (
-    CASE_STATUS_OPEN,
     CASE_STATUS_EVIDENCE_OPEN,
     CASE_STATUS_EVIDENCE_FROZEN,
     CASE_STATUS_VERDICT_PROPOSED,
@@ -86,6 +95,14 @@ CASE_STATUSES = (
     CASE_STATUS_FINALIZED,
     CASE_STATUS_INVALIDATED,
     CASE_STATUS_ABANDONED,
+)
+
+# Statuses in which a case still holds its rule's active-case lock.
+CASE_STATUSES_ACTIVE = (
+    CASE_STATUS_EVIDENCE_OPEN,
+    CASE_STATUS_EVIDENCE_FROZEN,
+    CASE_STATUS_VERDICT_PROPOSED,
+    CASE_STATUS_CHALLENGED,
 )
 
 RULE_CATEGORIES = (
@@ -148,6 +165,10 @@ FINDING_NOT_SATISFIED = "NOT_SATISFIED"
 FINDING_UNCLEAR = "UNCLEAR"
 FINDINGS = (FINDING_SATISFIED, FINDING_NOT_SATISFIED, FINDING_UNCLEAR)
 
+# Submitter assertions about a source. None is verified by the contract;
+# adjudication decides whether a source deserves the claim. There is
+# deliberately no "OFFICIAL_VERIFIED" value: nothing here is cryptographically
+# verified in V1.
 EVIDENCE_TYPES = (
     "OFFICIAL_DOCUMENTATION",
     "FINALIZED_GOVERNANCE_DECISION",
@@ -223,8 +244,47 @@ BOND_DISPOSITIONS = (
     BOND_DISPOSITION_SLASH,
 )
 
-# Error prefixes so validators can classify failures consistently.
-ERROR_EXPECTED = "[EXPECTED]"
+# Reasons a case may terminate without adjudication.
+INVALID_REASON_NONE = ""
+INVALID_REASON_STALE_VERSION_BINDING = "STALE_VERSION_BINDING"
+INVALID_REASON_EVIDENCE_WINDOW_EXPIRED = "EVIDENCE_WINDOW_EXPIRED"
+
+# ---------------------------------------------------------------------------
+# Error codes. Stable, testable prefixes; no stack detail is exposed.
+# ---------------------------------------------------------------------------
+
+E_PAUSED = "[PAUSED]"
+E_NOT_OWNER = "[NOT_OWNER]"
+E_INVALID_INPUT = "[INVALID_INPUT]"
+E_PROTOCOL_EXISTS = "[PROTOCOL_EXISTS]"
+E_PROTOCOL_NOT_FOUND = "[PROTOCOL_NOT_FOUND]"
+E_PROTOCOL_CAP = "[PROTOCOL_CAP]"
+E_RULE_NOT_FOUND = "[RULE_NOT_FOUND]"
+E_RULE_CAP = "[RULE_CAP]"
+E_DUPLICATE_RULE = "[DUPLICATE_RULE]"
+E_RULE_ALREADY_ESTABLISHED = "[RULE_ALREADY_ESTABLISHED]"
+E_NO_CANONICAL_RULE = "[NO_CANONICAL_RULE]"
+E_ACTIVE_CASE_EXISTS = "[ACTIVE_CASE_EXISTS]"
+E_CASE_CAP = "[CASE_CAP]"
+E_CASE_NOT_FOUND = "[CASE_NOT_FOUND]"
+E_CASE_NOT_OPEN = "[CASE_NOT_OPEN]"
+E_NOT_REPORTER = "[NOT_REPORTER]"
+E_EVIDENCE_CAP = "[EVIDENCE_CAP]"
+E_SOURCE_CAP = "[SOURCE_CAP]"
+E_MIN_EVIDENCE = "[MIN_EVIDENCE]"
+E_DUPLICATE_EVIDENCE = "[DUPLICATE_EVIDENCE]"
+E_EVIDENCE_NOT_FOUND = "[EVIDENCE_NOT_FOUND]"
+E_INVALID_URL = "[INVALID_URL]"
+E_INVALID_ANCHORS = "[INVALID_ANCHORS]"
+E_STALE_CASE = "[STALE_CASE]"
+E_NOT_STALE = "[NOT_STALE]"
+E_WINDOW_OPEN = "[WINDOW_OPEN]"
+
+# Case fingerprint scheme. Versioned because Stage 5 will extend the preimage
+# with per-evidence snapshot fingerprints once retrieval exists.
+CASE_FP_SCHEME = "DRB-CASE-FP-v1"
+FP_FIELD_SEP = "|"
+FP_ANCHOR_SEP = "\x1f"
 
 # ---------------------------------------------------------------------------
 # Deterministic helpers
@@ -236,18 +296,36 @@ def _now() -> u256:
     return u256(int(time.time()))
 
 
-def _require(condition: bool, message: str) -> None:
-    if not condition:
-        raise Exception(ERROR_EXPECTED + " " + message)
+def _fail(code: str, detail: str) -> None:
+    raise gl.vm.UserError(code + " " + detail)
+
+
+def _sha256_hex(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _fp_field(value: str) -> str:
+    """Length-prefixed field, so no field boundary can be forged by content."""
+    return str(len(value)) + ":" + value
+
+
+def _collapse_ws(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _bounded_text(value: str, min_len: int, max_len: int, label: str) -> str:
+    """Collapse whitespace, then enforce inclusive length bounds."""
+    cleaned = _collapse_ws(value)
+    if len(cleaned) < min_len:
+        _fail(E_INVALID_INPUT, label + " is shorter than " + str(min_len))
+    if len(cleaned) > max_len:
+        _fail(E_INVALID_INPUT, label + " exceeds " + str(max_len))
+    return cleaned
 
 
 def _in_vocabulary(value: str, vocabulary: tuple, label: str) -> None:
-    _require(value in vocabulary, "invalid " + label + ": " + value)
-
-
-def _bounded(value: str, max_len: int, label: str) -> None:
-    _require(len(value) > 0, label + " must not be empty")
-    _require(len(value) <= max_len, label + " exceeds " + str(max_len) + " chars")
+    if value not in vocabulary:
+        _fail(E_INVALID_INPUT, "invalid " + label + ": " + value)
 
 
 def _page_bounds(offset: u256, limit: u256, total: int) -> tuple:
@@ -268,15 +346,124 @@ def _page_bounds(offset: u256, limit: u256, total: int) -> tuple:
     return (start, end)
 
 
-def _is_ascii_id(value: str) -> bool:
-    """Namespace ids are restricted to a conservative, collision-legible set."""
-    if len(value) == 0:
+def _is_valid_protocol_id(value: str) -> bool:
+    """Namespaces are lowercase [a-z0-9-_], never whitespace-only or invisible."""
+    if len(value) < MIN_PROTOCOL_ID_LEN or len(value) > MAX_PROTOCOL_ID_LEN:
         return False
     for ch in value:
         ok = ("a" <= ch <= "z") or ("0" <= ch <= "9") or ch == "-" or ch == "_"
         if not ok:
             return False
-    return True
+    # Must contain at least one alphanumeric; "--" alone is not an identifier.
+    for ch in value:
+        if ("a" <= ch <= "z") or ("0" <= ch <= "9"):
+            return True
+    return False
+
+
+def _normalize_url(raw: str) -> str:
+    """Deterministic URL normalization. Never changes which resource is meant.
+
+    1. reject empty or over MAX_URL_LEN
+    2. split; scheme must be http or https (case-insensitive)
+    3. lowercase scheme and host; reject empty host and embedded credentials
+    4. drop the default port (:80 for http, :443 for https)
+    5. drop the fragment entirely - it never selects a different resource
+    6. empty path becomes "/"; a trailing "/" is removed except at the root
+    7. query is preserved verbatim - order and case can be semantic
+    8. path case is preserved - many documentation hosts are case-sensitive
+    """
+    candidate = raw.strip()
+    if len(candidate) == 0 or len(candidate) > MAX_URL_LEN:
+        _fail(E_INVALID_URL, "url is empty or exceeds " + str(MAX_URL_LEN))
+
+    parts = urlsplit(candidate)
+    scheme = parts.scheme.lower()
+    if scheme != "http" and scheme != "https":
+        _fail(E_INVALID_URL, "unsupported scheme: " + parts.scheme)
+
+    netloc = parts.netloc.lower()
+    if "@" in netloc:
+        _fail(E_INVALID_URL, "credentials in url are not accepted")
+    if len(netloc) == 0:
+        _fail(E_INVALID_URL, "missing host")
+    if netloc.endswith("."):
+        netloc = netloc[:-1]
+    if scheme == "http" and netloc.endswith(":80"):
+        netloc = netloc[:-3]
+    if scheme == "https" and netloc.endswith(":443"):
+        netloc = netloc[:-4]
+    if len(netloc) == 0 or netloc.startswith(":") or " " in netloc:
+        _fail(E_INVALID_URL, "malformed host")
+    if "." not in netloc:
+        _fail(E_INVALID_URL, "host must be a dotted name")
+
+    path = parts.path
+    if len(path) == 0:
+        path = "/"
+    if len(path) > 1 and path.endswith("/"):
+        path = path[:-1]
+
+    normalized = urlunsplit((scheme, netloc, path, parts.query, ""))
+    if len(normalized) > MAX_URL_LEN:
+        _fail(E_INVALID_URL, "normalized url exceeds " + str(MAX_URL_LEN))
+    return normalized
+
+
+def _source_key_of(normalized_url: str) -> str:
+    """Host plus first path segment.
+
+    A dedupe and counting hint only. It is never a claim that two different
+    source keys are independent sources - independence is semantic and is
+    decided later by adjudication.
+    """
+    parts = urlsplit(normalized_url)
+    host = parts.netloc
+    if host.startswith("www."):
+        host = host[4:]
+    segments = [s for s in parts.path.split("/") if len(s) > 0]
+    key = host
+    if len(segments) > 0:
+        key = host + "/" + segments[0]
+    if len(key) > MAX_SOURCE_KEY_LEN:
+        key = key[:MAX_SOURCE_KEY_LEN]
+    return key
+
+
+def _normalize_anchors(raw_anchors: list) -> list:
+    """Bounded, deduplicated, non-empty anchor terms.
+
+    Anchors drive the deterministic excerpt extraction Stage 4 applies to
+    retrieved page text. They are frozen with the case so extraction is
+    reproducible by any reader.
+    """
+    if len(raw_anchors) < MIN_ANCHOR_COUNT or len(raw_anchors) > MAX_ANCHOR_COUNT:
+        _fail(
+            E_INVALID_ANCHORS,
+            "expected " + str(MIN_ANCHOR_COUNT) + " to " + str(MAX_ANCHOR_COUNT),
+        )
+    cleaned = []
+    total = 0
+    for item in raw_anchors:
+        anchor = _collapse_ws(item)
+        if len(anchor) < MIN_ANCHOR_LEN:
+            _fail(E_INVALID_ANCHORS, "anchor shorter than " + str(MIN_ANCHOR_LEN))
+        if len(anchor) > MAX_ANCHOR_LEN:
+            _fail(E_INVALID_ANCHORS, "anchor exceeds " + str(MAX_ANCHOR_LEN))
+        folded = anchor.lower()
+        for existing in cleaned:
+            if existing.lower() == folded:
+                _fail(E_INVALID_ANCHORS, "duplicate anchor: " + anchor)
+        total = total + len(anchor)
+        cleaned.append(anchor)
+    if total > MAX_ANCHORS_LEN:
+        _fail(E_INVALID_ANCHORS, "anchors exceed " + str(MAX_ANCHORS_LEN) + " total")
+    return cleaned
+
+
+def _title_key(protocol_id: str, category: str, title: str) -> str:
+    """Duplicate-rule guard: same protocol, category and case-folded title."""
+    return protocol_id + FP_FIELD_SEP + category + FP_FIELD_SEP + title.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +500,8 @@ class RuleRecord:
     current_fingerprint: str
     version_count: u256
     case_count: u256
-    open_case_id: str
+    active_case_id: str
+    creator: Address
     created_at: u256
 
 
@@ -341,18 +529,22 @@ class CaseRecord:
     protocol_id: str
     rule_id: str
     reporter: Address
+    # Concurrency anchor: the exact canonical state this case intends to act on.
     expected_version: u256
     expected_fingerprint: str
     claimed_text: str
     claimed_scope: str
     claimed_exceptions: str
     status: str
+    invalid_reason: str
     case_fingerprint: str
+    frozen_evidence_ids: DynArray[str]
     evidence_count: u256
     challenge_count: u256
     verdict_count: u256
     bond_id: str
     opened_at: u256
+    evidence_deadline: u256
     frozen_at: u256
     verdict_at: u256
     finalized_at: u256
@@ -365,12 +557,16 @@ class EvidenceRecord:
     case_id: str
     submitter: Address
     url: str
+    url_key: str
     source_key: str
     retrieval_mode: str
-    anchors: str
+    anchors: DynArray[str]
+    # Submitter assertion, never verified by the contract.
     claimed_type: str
     relevance_note: str
     claimed_published_at: u256
+    # Explicit UNKNOWN, so 0 never masquerades as a real timestamp.
+    claimed_published_known: bool
     state: str
     snapshot: str
     snapshot_fingerprint: str
@@ -465,7 +661,7 @@ class DefiRulebook(gl.Contract):
     challenge_seq: u256
     bond_seq: u256
 
-    # Primary records, keyed by global id
+    # Primary records, keyed by canonical id
     protocols: TreeMap[str, ProtocolRecord]
     rules: TreeMap[str, RuleRecord]
     rule_versions: TreeMap[str, RuleVersionRecord]
@@ -486,6 +682,7 @@ class DefiRulebook(gl.Contract):
 
     # Deterministic uniqueness guards
     protocol_id_taken: TreeMap[str, bool]
+    rule_title_taken: TreeMap[str, bool]
     evidence_url_seen: TreeMap[str, bool]
     source_key_count: TreeMap[str, u256]
 
@@ -501,19 +698,235 @@ class DefiRulebook(gl.Contract):
         self.challenge_window_seconds = u256(DEFAULT_CHALLENGE_WINDOW_SECONDS)
         self.evidence_window_seconds = u256(DEFAULT_EVIDENCE_WINDOW_SECONDS)
 
-    # -- internal helpers ---------------------------------------------------
+    # -- internal guards ----------------------------------------------------
 
     def _only_owner(self) -> None:
-        _require(gl.message.sender_address == self.owner, "caller is not the owner")
+        if gl.message.sender_address != self.owner:
+            _fail(E_NOT_OWNER, "caller is not the owner")
 
     def _not_paused(self) -> None:
-        _require(not self.paused, "contract is paused")
+        if self.paused:
+            _fail(E_PAUSED, "new activity is paused")
+
+    def _get_protocol(self, protocol_id: str) -> ProtocolRecord:
+        if protocol_id not in self.protocols:
+            _fail(E_PROTOCOL_NOT_FOUND, protocol_id)
+        return self.protocols[protocol_id]
+
+    def _get_rule(self, rule_id: str) -> RuleRecord:
+        if rule_id not in self.rules:
+            _fail(E_RULE_NOT_FOUND, rule_id)
+        return self.rules[rule_id]
+
+    def _get_case(self, case_id: str) -> CaseRecord:
+        if case_id not in self.cases:
+            _fail(E_CASE_NOT_FOUND, case_id)
+        return self.cases[case_id]
 
     def _next_id(self, prefix: str, current: u256) -> str:
         return prefix + "_" + str(int(current) + 1)
 
     def _version_key(self, rule_id: str, version: u256) -> str:
         return rule_id + ":v_" + str(int(version))
+
+    def _binding_is_current(self, case: CaseRecord) -> bool:
+        """True when the case still targets the rule's present canonical state."""
+        rule = self.rules[case.rule_id]
+        if int(rule.current_version) != int(case.expected_version):
+            return False
+        return rule.current_fingerprint == case.expected_fingerprint
+
+    def _open_case(
+        self,
+        case_type: str,
+        rule: RuleRecord,
+        expected_version: u256,
+        expected_fingerprint: str,
+        text: str,
+        scope: str,
+        exceptions: str,
+    ) -> str:
+        """Shared deterministic case-opening path for RULE_CLAIM and RULE_DRIFT."""
+        if len(rule.active_case_id) > 0:
+            _fail(E_ACTIVE_CASE_EXISTS, rule.active_case_id)
+        if int(rule.case_count) >= MAX_CASES_PER_RULE:
+            _fail(E_CASE_CAP, "rule reached " + str(MAX_CASES_PER_RULE) + " cases")
+
+        claimed_text = _bounded_text(text, MIN_RULE_TEXT_LEN, MAX_RULE_TEXT_LEN, "text")
+        claimed_scope = _bounded_text(scope, 0, MAX_SCOPE_LEN, "scope")
+        claimed_exceptions = _bounded_text(
+            exceptions, 0, MAX_EXCEPTIONS_LEN, "exceptions"
+        )
+
+        now = _now()
+        case_id = self._next_id("c", self.case_seq)
+        self.case_seq = u256(int(self.case_seq) + 1)
+
+        self.cases[case_id] = CaseRecord(
+            case_id=case_id,
+            case_type=case_type,
+            protocol_id=rule.protocol_id,
+            rule_id=rule.rule_id,
+            reporter=gl.message.sender_address,
+            expected_version=expected_version,
+            expected_fingerprint=expected_fingerprint,
+            claimed_text=claimed_text,
+            claimed_scope=claimed_scope,
+            claimed_exceptions=claimed_exceptions,
+            status=CASE_STATUS_EVIDENCE_OPEN,
+            invalid_reason=INVALID_REASON_NONE,
+            case_fingerprint="",
+            frozen_evidence_ids=[],
+            evidence_count=u256(0),
+            challenge_count=u256(0),
+            verdict_count=u256(0),
+            bond_id="",
+            opened_at=now,
+            evidence_deadline=u256(int(now) + int(self.evidence_window_seconds)),
+            frozen_at=u256(0),
+            verdict_at=u256(0),
+            finalized_at=u256(0),
+        )
+
+        rule.active_case_id = case_id
+        rule.case_count = u256(int(rule.case_count) + 1)
+        if rule.status == RULE_STATUS_ACTIVE:
+            rule.status = RULE_STATUS_DISPUTED
+
+        self.cases_by_rule[rule.rule_id].append(case_id)
+        self.evidence_by_case[case_id] = []
+
+        protocol = self.protocols[rule.protocol_id]
+        protocol.open_case_count = u256(int(protocol.open_case_count) + 1)
+
+        return case_id
+
+    def _close_case(self, case: CaseRecord, status: str, reason: str) -> None:
+        """Terminate a case without adjudication and release the rule lock.
+
+        Evidence and case inputs are left untouched: closing records an
+        outcome, it never rewrites history.
+        """
+        case.status = status
+        case.invalid_reason = reason
+
+        rule = self.rules[case.rule_id]
+        if rule.active_case_id == case.case_id:
+            rule.active_case_id = ""
+            if rule.status == RULE_STATUS_DISPUTED:
+                if int(rule.current_version) > 0:
+                    rule.status = RULE_STATUS_ACTIVE
+                else:
+                    rule.status = RULE_STATUS_UNVERIFIED
+
+        protocol = self.protocols[case.protocol_id]
+        if int(protocol.open_case_count) > 0:
+            protocol.open_case_count = u256(int(protocol.open_case_count) - 1)
+
+    def _compute_case_fingerprint(self, case: CaseRecord, ordered_ids: list) -> str:
+        """Deterministic preimage.
+
+        Ordering is the append order of evidence, never dict iteration order,
+        and every field is length-prefixed so content cannot forge a boundary.
+        """
+        parts = [
+            _fp_field(CASE_FP_SCHEME),
+            _fp_field(case.case_type),
+            _fp_field(case.protocol_id),
+            _fp_field(case.rule_id),
+            _fp_field(str(int(case.expected_version))),
+            _fp_field(case.expected_fingerprint),
+            _fp_field(case.claimed_text),
+            _fp_field(case.claimed_scope),
+            _fp_field(case.claimed_exceptions),
+            _fp_field(DIMENSION_SET_VERSION),
+            _fp_field(str(len(ordered_ids))),
+        ]
+        for evidence_id in ordered_ids:
+            item = self.evidence[evidence_id]
+            anchors = FP_ANCHOR_SEP.join([a for a in item.anchors])
+            parts.append(_fp_field(item.evidence_id))
+            parts.append(_fp_field(item.url_key))
+            parts.append(_fp_field(item.claimed_type))
+            parts.append(_fp_field(item.retrieval_mode))
+            parts.append(_fp_field(anchors))
+        return _sha256_hex(FP_FIELD_SEP.join(parts))
+
+    # -- shaping helpers for bounded views ----------------------------------
+
+    def _protocol_view(self, record: ProtocolRecord) -> dict:
+        return {
+            "protocol_id": record.protocol_id,
+            "display_name": record.display_name,
+            "homepage_url": record.homepage_url,
+            "docs_root_url": record.docs_root_url,
+            "registrant": record.registrant.as_hex,
+            "community_maintained": True,
+            "officially_verified": False,
+            "created_at": int(record.created_at),
+            "rule_count": int(record.rule_count),
+            "open_case_count": int(record.open_case_count),
+        }
+
+    def _rule_view(self, record: RuleRecord) -> dict:
+        return {
+            "rule_id": record.rule_id,
+            "protocol_id": record.protocol_id,
+            "category": record.category,
+            "title": record.title,
+            "status": record.status,
+            "current_version": int(record.current_version),
+            "current_fingerprint": record.current_fingerprint,
+            "has_canonical_version": int(record.current_version) > 0,
+            "version_count": int(record.version_count),
+            "case_count": int(record.case_count),
+            "active_case_id": record.active_case_id,
+            "creator": record.creator.as_hex,
+            "created_at": int(record.created_at),
+        }
+
+    def _case_view(self, record: CaseRecord) -> dict:
+        return {
+            "case_id": record.case_id,
+            "case_type": record.case_type,
+            "protocol_id": record.protocol_id,
+            "rule_id": record.rule_id,
+            "reporter": record.reporter.as_hex,
+            "expected_version": int(record.expected_version),
+            "expected_fingerprint": record.expected_fingerprint,
+            "claimed_text": record.claimed_text,
+            "claimed_scope": record.claimed_scope,
+            "claimed_exceptions": record.claimed_exceptions,
+            "status": record.status,
+            "invalid_reason": record.invalid_reason,
+            "case_fingerprint": record.case_fingerprint,
+            "evidence_count": int(record.evidence_count),
+            "frozen_evidence_count": len(record.frozen_evidence_ids),
+            "opened_at": int(record.opened_at),
+            "evidence_deadline": int(record.evidence_deadline),
+            "frozen_at": int(record.frozen_at),
+        }
+
+    def _evidence_view(self, record: EvidenceRecord) -> dict:
+        return {
+            "evidence_id": record.evidence_id,
+            "case_id": record.case_id,
+            "submitter": record.submitter.as_hex,
+            "url": record.url,
+            "url_key": record.url_key,
+            "source_key": record.source_key,
+            "retrieval_mode": record.retrieval_mode,
+            "anchors": [a for a in record.anchors],
+            "claimed_type": record.claimed_type,
+            "claimed_type_is_submitter_assertion": True,
+            "relevance_note": record.relevance_note,
+            "claimed_published_at": int(record.claimed_published_at),
+            "claimed_published_known": record.claimed_published_known,
+            "state": record.state,
+            "snapshot_fingerprint": record.snapshot_fingerprint,
+            "snapshot_at": int(record.snapshot_at),
+            "submitted_at": int(record.submitted_at),
+        }
 
     # -- admin --------------------------------------------------------------
 
@@ -527,7 +940,331 @@ class DefiRulebook(gl.Contract):
         self._only_owner()
         self.paused = flag
 
-    # -- views --------------------------------------------------------------
+    # -- protocol registry --------------------------------------------------
+
+    @gl.public.write
+    def register_protocol(
+        self,
+        protocol_id: str,
+        display_name: str,
+        homepage_url: str,
+        docs_root_url: str,
+    ) -> str:
+        """Reserve a COMMUNITY-MAINTAINED namespace.
+
+        Registration confers no protocol ownership, no verified identity, no
+        governance authority and no exclusive right to define rules. The
+        registrant cannot edit rules, block cases, or censor evidence.
+        """
+        self._not_paused()
+
+        identifier = protocol_id.strip().lower()
+        if not _is_valid_protocol_id(identifier):
+            _fail(E_INVALID_INPUT, "protocol_id must be [a-z0-9-_] and non-blank")
+        if identifier in self.protocol_id_taken:
+            _fail(E_PROTOCOL_EXISTS, identifier)
+        if len(self.protocol_ids) >= MAX_PROTOCOLS:
+            _fail(E_PROTOCOL_CAP, "registry reached " + str(MAX_PROTOCOLS))
+
+        name = _bounded_text(display_name, 1, MAX_DISPLAY_NAME_LEN, "display_name")
+        # Submitter assertions only. Never treated as proof of identity.
+        home = ""
+        if len(homepage_url.strip()) > 0:
+            home = _normalize_url(homepage_url)
+        docs = ""
+        if len(docs_root_url.strip()) > 0:
+            docs = _normalize_url(docs_root_url)
+
+        self.protocols[identifier] = ProtocolRecord(
+            protocol_id=identifier,
+            display_name=name,
+            homepage_url=home,
+            docs_root_url=docs,
+            registrant=gl.message.sender_address,
+            created_at=_now(),
+            rule_count=u256(0),
+            open_case_count=u256(0),
+        )
+        self.protocol_id_taken[identifier] = True
+        self.protocol_ids.append(identifier)
+        self.rules_by_protocol[identifier] = []
+        self.protocol_seq = u256(int(self.protocol_seq) + 1)
+        return identifier
+
+    # -- rule shells --------------------------------------------------------
+
+    @gl.public.write
+    def propose_rule(self, protocol_id: str, category: str, title: str) -> str:
+        """Create a rule SHELL: a topic, not a commitment.
+
+        A shell has no canonical text, no version, no established status and no
+        finality. Only an ESTABLISHED RULE_CLAIM can mint version 1, in a later
+        stage. Permissionless within a registered namespace.
+        """
+        self._not_paused()
+
+        protocol = self._get_protocol(protocol_id)
+        _in_vocabulary(category, RULE_CATEGORIES, "category")
+        clean_title = _bounded_text(title, MIN_TITLE_LEN, MAX_TITLE_LEN, "title")
+
+        if int(protocol.rule_count) >= MAX_RULES_PER_PROTOCOL:
+            _fail(E_RULE_CAP, "protocol reached " + str(MAX_RULES_PER_PROTOCOL))
+
+        key = _title_key(protocol.protocol_id, category, clean_title)
+        if key in self.rule_title_taken:
+            _fail(E_DUPLICATE_RULE, "same protocol, category and title exists")
+
+        rule_id = self._next_id("r", self.rule_seq)
+        self.rule_seq = u256(int(self.rule_seq) + 1)
+
+        self.rules[rule_id] = RuleRecord(
+            rule_id=rule_id,
+            protocol_id=protocol.protocol_id,
+            category=category,
+            title=clean_title,
+            status=RULE_STATUS_UNVERIFIED,
+            current_version=u256(0),
+            current_fingerprint="",
+            version_count=u256(0),
+            case_count=u256(0),
+            active_case_id="",
+            creator=gl.message.sender_address,
+            created_at=_now(),
+        )
+        self.rule_title_taken[key] = True
+        self.rules_by_protocol[protocol.protocol_id].append(rule_id)
+        self.versions_by_rule[rule_id] = []
+        self.cases_by_rule[rule_id] = []
+        protocol.rule_count = u256(int(protocol.rule_count) + 1)
+        return rule_id
+
+    # -- case creation ------------------------------------------------------
+
+    @gl.public.write
+    def open_rule_claim(
+        self, rule_id: str, text: str, scope: str, exceptions: str
+    ) -> str:
+        """Assert that authoritative evidence ESTABLISHES an initial rule.
+
+        This is not a proposal that the rule should be adopted. RULE_CLAIM
+        establishes the first canonical version only; once a rule has a
+        canonical version, changes go through RULE_DRIFT.
+        """
+        self._not_paused()
+
+        rule = self._get_rule(rule_id)
+        if int(rule.current_version) > 0:
+            _fail(E_RULE_ALREADY_ESTABLISHED, "use open_rule_drift")
+
+        return self._open_case(
+            CASE_TYPE_RULE_CLAIM, rule, u256(0), "", text, scope, exceptions
+        )
+
+    @gl.public.write
+    def open_rule_drift(
+        self,
+        rule_id: str,
+        expected_version: u256,
+        expected_fingerprint: str,
+        text: str,
+        scope: str,
+        exceptions: str,
+    ) -> str:
+        """Assert that the canonical rule is STALE.
+
+        The caller must name the exact canonical version and fingerprint being
+        challenged. That binding is the concurrency anchor: a case opened
+        against v3 can never silently mutate v4.
+        """
+        self._not_paused()
+
+        rule = self._get_rule(rule_id)
+        if int(rule.current_version) == 0:
+            _fail(E_NO_CANONICAL_RULE, "use open_rule_claim")
+        if int(expected_version) != int(rule.current_version):
+            _fail(E_STALE_CASE, "expected_version is not the current version")
+        if expected_fingerprint != rule.current_fingerprint:
+            _fail(E_STALE_CASE, "expected_fingerprint does not match")
+
+        return self._open_case(
+            CASE_TYPE_RULE_DRIFT,
+            rule,
+            rule.current_version,
+            rule.current_fingerprint,
+            text,
+            scope,
+            exceptions,
+        )
+
+    # -- evidence -----------------------------------------------------------
+
+    @gl.public.write
+    def submit_evidence(
+        self,
+        case_id: str,
+        url: str,
+        retrieval_mode: str,
+        anchors: list[str],
+        claimed_type: str,
+        relevance_note: str,
+        claimed_published_at: u256,
+        published_time_known: bool,
+    ) -> str:
+        """Submit a source. Nothing is fetched, hashed or verified here.
+
+        `claimed_type` and `claimed_published_at` are SUBMITTER ASSERTIONS.
+        Whether a source deserves its claimed authority, and whether its timing
+        supports the claim, is decided later by adjudication.
+        """
+        self._not_paused()
+
+        case = self._get_case(case_id)
+        if case.status != CASE_STATUS_EVIDENCE_OPEN:
+            _fail(E_CASE_NOT_OPEN, case.status)
+        if int(case.evidence_count) >= MAX_EVIDENCE_PER_CASE:
+            _fail(E_EVIDENCE_CAP, "case reached " + str(MAX_EVIDENCE_PER_CASE))
+
+        _in_vocabulary(retrieval_mode, RETRIEVAL_MODES, "retrieval_mode")
+        _in_vocabulary(claimed_type, EVIDENCE_TYPES, "claimed_type")
+        note = _bounded_text(
+            relevance_note,
+            MIN_RELEVANCE_NOTE_LEN,
+            MAX_RELEVANCE_NOTE_LEN,
+            "relevance_note",
+        )
+        clean_anchors = _normalize_anchors(anchors)
+
+        url_key = _normalize_url(url)
+        dedupe_key = case_id + FP_FIELD_SEP + url_key
+        if dedupe_key in self.evidence_url_seen:
+            _fail(E_DUPLICATE_EVIDENCE, "url already submitted to this case")
+
+        source_key = _source_key_of(url_key)
+        source_count_key = case_id + FP_FIELD_SEP + source_key
+        used = 0
+        if source_count_key in self.source_key_count:
+            used = int(self.source_key_count[source_count_key])
+        if used >= MAX_EVIDENCE_PER_SOURCE_KEY:
+            _fail(
+                E_SOURCE_CAP,
+                source_key + " reached " + str(MAX_EVIDENCE_PER_SOURCE_KEY),
+            )
+
+        published_at = u256(0)
+        if published_time_known:
+            if int(claimed_published_at) == 0:
+                _fail(E_INVALID_INPUT, "published_time_known requires a timestamp")
+            published_at = claimed_published_at
+
+        evidence_id = self._next_id("e", self.evidence_seq)
+        self.evidence_seq = u256(int(self.evidence_seq) + 1)
+
+        self.evidence[evidence_id] = EvidenceRecord(
+            evidence_id=evidence_id,
+            case_id=case_id,
+            submitter=gl.message.sender_address,
+            url=url.strip(),
+            url_key=url_key,
+            source_key=source_key,
+            retrieval_mode=retrieval_mode,
+            anchors=clean_anchors,
+            claimed_type=claimed_type,
+            relevance_note=note,
+            claimed_published_at=published_at,
+            claimed_published_known=published_time_known,
+            state=EVIDENCE_STATE_SUBMITTED,
+            snapshot="",
+            snapshot_fingerprint="",
+            snapshot_at=u256(0),
+            submitted_at=_now(),
+        )
+
+        self.evidence_url_seen[dedupe_key] = True
+        self.source_key_count[source_count_key] = u256(used + 1)
+        self.evidence_by_case[case_id].append(evidence_id)
+        case.evidence_count = u256(int(case.evidence_count) + 1)
+        return evidence_id
+
+    @gl.public.write
+    def freeze_evidence(self, case_id: str) -> str:
+        """Freeze the exact evidence set and bind the case to it.
+
+        This is the architectural boundary before any non-determinism. After
+        it, no evidence may be added or removed, anchors cannot change, and the
+        claimed text and version binding are immutable.
+
+        Reporter-only, deliberately: a permissionless freeze would let anyone
+        seal a case the moment its first source landed, denying the reporter
+        any chance to finish assembling evidence. The counterweight is
+        `abandon_expired_case`, which anyone may call once the evidence window
+        closes, so a reporter cannot hold a rule's lock forever.
+
+        Allowed while paused: pause stops new exposure, it must never strand an
+        already-open case.
+        """
+        case = self._get_case(case_id)
+        if case.status != CASE_STATUS_EVIDENCE_OPEN:
+            _fail(E_CASE_NOT_OPEN, case.status)
+        if gl.message.sender_address != case.reporter:
+            _fail(E_NOT_REPORTER, "only the case reporter may freeze evidence")
+        if int(case.evidence_count) < MIN_EVIDENCE_PER_CASE:
+            _fail(E_MIN_EVIDENCE, "need at least " + str(MIN_EVIDENCE_PER_CASE))
+
+        # Stale-binding check. A RULE_CLAIM binds to version 0, a RULE_DRIFT to
+        # the version it named. Either way, if the rule moved on since the case
+        # opened, freezing would let this case act on state it never examined.
+        # Refuse; the explicit exit is invalidate_stale_case.
+        if not self._binding_is_current(case):
+            _fail(E_STALE_CASE, "canonical state changed since the case opened")
+
+        ordered_ids = [eid for eid in self.evidence_by_case[case_id]]
+        if len(ordered_ids) > MAX_EVIDENCE_PER_CASE:
+            _fail(E_EVIDENCE_CAP, "frozen set exceeds cap")
+
+        fingerprint = self._compute_case_fingerprint(case, ordered_ids)
+        case.frozen_evidence_ids = ordered_ids
+        case.case_fingerprint = fingerprint
+        case.status = CASE_STATUS_EVIDENCE_FROZEN
+        case.frozen_at = _now()
+        return fingerprint
+
+    # -- deterministic exits (no adjudication, no economics) ----------------
+
+    @gl.public.write
+    def invalidate_stale_case(self, case_id: str) -> None:
+        """Close a case whose canonical binding no longer matches reality.
+
+        Permissionless: a stale case holds its rule's active-case lock, so
+        anyone must be able to clear it. This records a lifecycle outcome only.
+        Bond disposition for INVALIDATED cases (full refund, per the approved
+        economics) belongs to the payout stage; nothing is paid here.
+        """
+        case = self._get_case(case_id)
+        if case.status not in CASE_STATUSES_ACTIVE:
+            _fail(E_CASE_NOT_OPEN, case.status)
+        if self._binding_is_current(case):
+            _fail(E_NOT_STALE, "case binding still matches canonical state")
+        self._close_case(
+            case, CASE_STATUS_INVALIDATED, INVALID_REASON_STALE_VERSION_BINDING
+        )
+
+    @gl.public.write
+    def abandon_expired_case(self, case_id: str) -> None:
+        """Close an un-frozen case whose evidence window has passed.
+
+        Permissionless, so a reporter who opens a case and walks away cannot
+        hold a rule's lock indefinitely.
+        """
+        case = self._get_case(case_id)
+        if case.status != CASE_STATUS_EVIDENCE_OPEN:
+            _fail(E_CASE_NOT_OPEN, case.status)
+        if int(_now()) <= int(case.evidence_deadline):
+            _fail(E_WINDOW_OPEN, "evidence window has not closed")
+        self._close_case(
+            case, CASE_STATUS_ABANDONED, INVALID_REASON_EVIDENCE_WINDOW_EXPIRED
+        )
+
+    # -- configuration views ------------------------------------------------
 
     @gl.public.view
     def get_config(self) -> dict:
@@ -536,6 +1273,7 @@ class DefiRulebook(gl.Contract):
             "contract_version": self.contract_version,
             "schema_version": SCHEMA_VERSION,
             "dimension_set_version": DIMENSION_SET_VERSION,
+            "case_fingerprint_scheme": CASE_FP_SCHEME,
             "owner": self.owner.as_hex,
             "sink_address": self.sink_address.as_hex,
             "paused": self.paused,
@@ -555,6 +1293,7 @@ class DefiRulebook(gl.Contract):
             "max_versions_per_rule": MAX_VERSIONS_PER_RULE,
             "max_cases_per_rule": MAX_CASES_PER_RULE,
             "max_evidence_per_case": MAX_EVIDENCE_PER_CASE,
+            "min_evidence_per_case": MIN_EVIDENCE_PER_CASE,
             "max_evidence_per_source_key": MAX_EVIDENCE_PER_SOURCE_KEY,
             "max_challenges_per_case": MAX_CHALLENGES_PER_CASE,
             "max_verdicts_per_case": MAX_VERDICTS_PER_CASE,
@@ -566,6 +1305,7 @@ class DefiRulebook(gl.Contract):
             "max_relevance_note_len": MAX_RELEVANCE_NOTE_LEN,
             "max_anchors_len": MAX_ANCHORS_LEN,
             "max_anchor_count": MAX_ANCHOR_COUNT,
+            "max_anchor_len": MAX_ANCHOR_LEN,
             "max_excerpt_len": MAX_EXCERPT_LEN,
             "default_page_size": DEFAULT_PAGE_SIZE,
             "max_page_size": MAX_PAGE_SIZE,
@@ -606,4 +1346,86 @@ class DefiRulebook(gl.Contract):
             "verdict_seq": int(self.verdict_seq),
             "challenge_seq": int(self.challenge_seq),
             "bond_seq": int(self.bond_seq),
+        }
+
+    # -- registry views -----------------------------------------------------
+
+    @gl.public.view
+    def get_protocol(self, protocol_id: str) -> dict:
+        return self._protocol_view(self._get_protocol(protocol_id))
+
+    @gl.public.view
+    def list_protocols(self, offset: u256, limit: u256) -> list[dict]:
+        total = len(self.protocol_ids)
+        start, end = _page_bounds(offset, limit, total)
+        out = []
+        index = start
+        while index < end:
+            out.append(self._protocol_view(self.protocols[self.protocol_ids[index]]))
+            index = index + 1
+        return out
+
+    @gl.public.view
+    def get_rule(self, rule_id: str) -> dict:
+        return self._rule_view(self._get_rule(rule_id))
+
+    @gl.public.view
+    def list_rules(self, protocol_id: str, offset: u256, limit: u256) -> list[dict]:
+        self._get_protocol(protocol_id)
+        ids = self.rules_by_protocol[protocol_id]
+        start, end = _page_bounds(offset, limit, len(ids))
+        out = []
+        index = start
+        while index < end:
+            out.append(self._rule_view(self.rules[ids[index]]))
+            index = index + 1
+        return out
+
+    @gl.public.view
+    def get_case(self, case_id: str) -> dict:
+        return self._case_view(self._get_case(case_id))
+
+    @gl.public.view
+    def list_rule_cases(self, rule_id: str, offset: u256, limit: u256) -> list[dict]:
+        self._get_rule(rule_id)
+        ids = self.cases_by_rule[rule_id]
+        start, end = _page_bounds(offset, limit, len(ids))
+        out = []
+        index = start
+        while index < end:
+            out.append(self._case_view(self.cases[ids[index]]))
+            index = index + 1
+        return out
+
+    @gl.public.view
+    def get_evidence(self, evidence_id: str) -> dict:
+        if evidence_id not in self.evidence:
+            _fail(E_EVIDENCE_NOT_FOUND, evidence_id)
+        return self._evidence_view(self.evidence[evidence_id])
+
+    @gl.public.view
+    def list_case_evidence(self, case_id: str, offset: u256, limit: u256) -> list[dict]:
+        self._get_case(case_id)
+        ids = self.evidence_by_case[case_id]
+        start, end = _page_bounds(offset, limit, len(ids))
+        out = []
+        index = start
+        while index < end:
+            out.append(self._evidence_view(self.evidence[ids[index]]))
+            index = index + 1
+        return out
+
+    @gl.public.view
+    def get_case_frozen_evidence(self, case_id: str) -> dict:
+        """The exact evidence set bound at freeze time, in frozen order."""
+        case = self._get_case(case_id)
+        frozen = len(case.case_fingerprint) > 0
+        return {
+            "case_id": case.case_id,
+            "status": case.status,
+            "is_frozen": frozen,
+            "case_fingerprint": case.case_fingerprint,
+            "case_fingerprint_scheme": CASE_FP_SCHEME,
+            "frozen_at": int(case.frozen_at),
+            "evidence_ids": [eid for eid in case.frozen_evidence_ids],
         }

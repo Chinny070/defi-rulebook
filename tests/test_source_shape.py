@@ -84,23 +84,41 @@ def test_contract_class_is_not_named_contract():
     assert "class Contract(gl.Contract)" not in TEXT
 
 
-def test_no_backend_or_scraping_imports():
-    forbidden = [
-        "requests", "httpx", "urllib", "socket", "bs4", "beautifulsoup",
-        "selenium", "playwright", "scrapy", "supabase", "firebase",
-        "psycopg", "sqlalchemy", "pymongo", "redis", "boto3",
-        "os", "sys", "subprocess", "random", "pathlib", "shutil",
-    ]
+def _imported_modules():
     tree = ast.parse(TEXT)
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for a in node.names:
-                imported.add(a.name.split(".")[0])
+                imported.add(a.name)
         elif isinstance(node, ast.ImportFrom) and node.module:
-            imported.add(node.module.split(".")[0])
+            imported.add(node.module)
+    return imported
+
+
+def test_no_backend_or_scraping_imports():
+    forbidden = [
+        "requests", "httpx", "socket", "bs4", "beautifulsoup",
+        "selenium", "playwright", "scrapy", "supabase", "firebase",
+        "psycopg", "sqlalchemy", "pymongo", "redis", "boto3",
+        "os", "sys", "subprocess", "random", "pathlib", "shutil",
+        "io", "http", "asyncio", "threading", "tempfile", "pickle",
+    ]
+    roots = {m.split(".")[0] for m in _imported_modules()}
     for name in forbidden:
-        assert name not in imported, f"forbidden import: {name}"
+        assert name not in roots, f"forbidden import: {name}"
+
+
+def test_import_allowlist():
+    """Only modules the GenVM linter permits, plus the SDK itself."""
+    allowed = {"genlayer", "dataclasses", "hashlib", "time", "urllib.parse"}
+    assert _imported_modules() <= allowed, _imported_modules() - allowed
+
+
+def test_urllib_is_only_the_parse_submodule():
+    """`urllib.parse` is explicitly allowlisted; the network submodules are not."""
+    for banned in ["urllib.request", "urllib.error", "urllib.robotparser"]:
+        assert banned not in TEXT
 
 
 def test_no_web_or_adjudication_calls_in_stage_2():
@@ -109,10 +127,48 @@ def test_no_web_or_adjudication_calls_in_stage_2():
         assert call not in TEXT, f"Stage 2 must not contain {call}"
 
 
-def test_no_payout_execution_in_stage_2():
+def test_no_payout_execution_yet():
     for call in ["emit_transfer", "gl.evm.contract_interface", ".emit(",
-                 "gl.deploy_contract", "gl.get_contract_at"]:
-        assert call not in TEXT, f"Stage 2 must not contain {call}"
+                 "gl.deploy_contract", "gl.get_contract_at",
+                 "gl.message.value", "payable"]:
+        assert call not in TEXT, f"payout logic must not appear yet: {call}"
+
+
+def test_no_canonical_version_write_shortcut():
+    """Only adjudication may mint a canonical version, in a later stage.
+
+    Nothing public may set a rule's version, fingerprint or text directly.
+    """
+    banned = [
+        "set_rule_version", "admin_set_rule", "force_establish", "accept_claim",
+        "establish_rule", "set_current_version", "set_verdict", "override_verdict",
+        "force_verdict", "mint_version", "seed_rule",
+    ]
+    for name in banned:
+        assert name not in TEXT, f"canonical-write shortcut present: {name}"
+
+
+def test_rule_version_record_is_never_written():
+    """RuleVersionRecord storage exists but must not be constructed yet."""
+    assert "RuleVersionRecord(" not in TEXT.replace("class RuleVersionRecord", "")
+
+
+def test_stale_binding_check_exists():
+    """The concurrency anchor must actually be enforced, not just stored."""
+    assert "_binding_is_current" in TEXT
+    assert "expected_fingerprint" in TEXT
+
+
+def test_uses_stable_error_codes():
+    for code in ["[PAUSED]", "[STALE_CASE]", "[DUPLICATE_EVIDENCE]",
+                 "[INVALID_URL]", "[ACTIVE_CASE_EXISTS]", "[MIN_EVIDENCE]"]:
+        assert code in TEXT, f"missing stable error code {code}"
+
+
+def test_uses_runtime_supported_user_error():
+    """gl.vm.UserError exists in the pinned SDK; gl.UserError does not."""
+    assert "gl.vm.UserError" in TEXT
+    assert "gl.UserError" not in TEXT
 
 
 def test_no_hardcoded_foreign_addresses():

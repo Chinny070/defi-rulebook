@@ -168,7 +168,7 @@ Stage 2 raises a plain `Exception` prefixed with `[EXPECTED]`, following the ski
 | Item | Stage to resolve |
 |---|---|
 | Outbound native transfer: synchronous-revert vs async-queued | Stage 4 |
-| `gl.UserError` vs `gl.vm.UserError` exact symbol | Stage 3 |
+| ~~`gl.UserError` vs `gl.vm.UserError`~~ | **CLOSED in Stage 3** - SDK introspection shows only `gl.vm.UserError` exists (`STAGE_3_DETERMINISTIC_LIFECYCLE.md` §1) |
 | Whether to move the runner pin to `9b8kjyda...` | Stage 4 (user decision) |
 | `strict_eq` convergence on real pages | Stage 4 gate |
 | ~~Whether Studio's schema loader agrees with `genvm-lint schema`~~ | **CLOSED** - user confirmed in Studio; ABI rendered, deploy FINALIZED (`STAGE_2_CONTRACT_FOUNDATION.md` §12) |
