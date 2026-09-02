@@ -155,6 +155,8 @@ def _drift_case(direct_vm, direct_deploy, direct_alice):
         scope="", exceptions="", predecessor=u256(2), originating_case_id="c_0",
         effective_basis="docs, 2025-01-01", status="CURRENT",
         established_at=u256(1), fingerprint="fp_v3",
+        version_id=version_key, originating_verdict_id="v_0",
+        evidence_digest="seeded",
     )
     rule = c.rules[rule_id]
     rule.current_version = u256(3)

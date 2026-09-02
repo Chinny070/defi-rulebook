@@ -7,12 +7,13 @@ Turn protocol documentation into something users can challenge.
 A challengeable, versioned, evidence-backed source of truth for DeFi protocol
 commitments, built as a GenLayer Intelligent Contract plus a read-first frontend.
 
-**Status: Stage 5 (semantic adjudication) only.** Nothing is deployed by Claude.
-The contract implements the protocol registry, rule shells, RULE_CLAIM and
-RULE_DRIFT case creation, evidence submission, deterministic evidence freeze,
-evidence snapshots retrieved through the official GenLayer web APIs, and
-GenLayer semantic adjudication into a proposed verdict.
-No challenges, no canonical rule versions, no payouts, no frontend.
+**Status: Stage 6 (challenges and versioning) only.** Nothing is deployed by
+Claude. The contract implements the full correctness lifecycle: protocol
+registry, rule shells, RULE_CLAIM and RULE_DRIFT cases, evidence submission and
+deterministic freeze, evidence snapshots through the official GenLayer web APIs,
+semantic adjudication, challenges with re-adjudication, finalization, and
+immutable canonical rule versions.
+No GEN economics, no frontend.
 
 - Architecture, audit and roadmap: [docs/STAGE_1_ARCHITECTURE_AND_AUDIT.md](docs/STAGE_1_ARCHITECTURE_AND_AUDIT.md)
 - Runtime compatibility: [docs/STAGE_2_RUNTIME_COMPATIBILITY.md](docs/STAGE_2_RUNTIME_COMPATIBILITY.md)
@@ -21,6 +22,7 @@ No challenges, no canonical rule versions, no payouts, no frontend.
 - Web retrieval decisions: [docs/STAGE_4_WEB_RETRIEVAL_DECISIONS.md](docs/STAGE_4_WEB_RETRIEVAL_DECISIONS.md)
 - Evidence snapshots: [docs/STAGE_4_EVIDENCE_SNAPSHOT.md](docs/STAGE_4_EVIDENCE_SNAPSHOT.md)
 - Semantic adjudication: [docs/STAGE_5_ADJUDICATION.md](docs/STAGE_5_ADJUDICATION.md)
+- Challenges and versioning: [docs/STAGE_6_CHALLENGES_AND_VERSIONING.md](docs/STAGE_6_CHALLENGES_AND_VERSIONING.md)
 
 ```
 contracts/   defi_rulebook.py - canonical production Intelligent Contract

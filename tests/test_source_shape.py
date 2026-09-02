@@ -127,10 +127,10 @@ def test_urllib_is_only_the_parse_submodule():
         assert banned not in TEXT
 
 
-def test_no_challenge_or_payout_calls_yet():
-    """Retrieval and adjudication are live from Stages 4-5; the rest is not."""
-    for name in ["def challenge", "def readjudicate", "def finalize",
-                 "def settle_bond", "emit_transfer", "gl.nondet.image"]:
+def test_no_gen_economics_yet():
+    """Challenges and finalization are live from Stage 6; economics are not."""
+    for name in ["def settle_bond", "emit_transfer", "gl.evm.contract_interface",
+                 "payable", "gl.message.value", "gl.nondet.image"]:
         assert name not in TEXT, f"must not appear yet: {name}"
 
 
@@ -142,11 +142,9 @@ def _span(tree, name):
     return fn.lineno, max(x.lineno for x in ast.walk(fn) if hasattr(x, "lineno"))
 
 
-def test_nondeterminism_is_confined_to_two_known_methods():
-    """Web retrieval belongs to snapshot_evidence; the model to adjudication.
-
-    Exactly two equivalence blocks exist, each in its own method, so no other
-    code path can reach the network or a model.
+def test_nondeterminism_is_confined_to_known_methods():
+    """Web retrieval belongs to snapshot_evidence; the model to adjudication
+    and re-adjudication. No other code path may reach the network or a model.
     """
     tree = ast.parse(TEXT)
     web_calls = [
@@ -161,15 +159,18 @@ def test_nondeterminism_is_confined_to_two_known_methods():
         n.lineno for n in ast.walk(tree)
         if isinstance(n, ast.Call) and "eq_principle" in ast.unparse(n.func)
     ]
-    assert len(eq_calls) == 2, f"expected two equivalence blocks, got {eq_calls}"
+    assert len(eq_calls) == 3, f"expected three equivalence blocks, got {eq_calls}"
 
     snap_lo, snap_hi = _span(tree, "snapshot_evidence")
     adj_lo, adj_hi = _span(tree, "request_adjudication")
+    res_lo, res_hi = _span(tree, "resolve_challenge")
 
     for line in web_calls:
         assert snap_lo <= line <= snap_hi, f"web call at {line} outside snapshot"
     for line in prompt_calls:
-        assert adj_lo <= line <= adj_hi, f"prompt at {line} outside adjudication"
+        in_adj = adj_lo <= line <= adj_hi
+        in_res = res_lo <= line <= res_hi
+        assert in_adj or in_res, f"prompt at {line} outside the adjudication paths"
 
 
 def test_the_model_never_reaches_the_web():
@@ -270,9 +271,27 @@ def test_no_canonical_version_write_shortcut():
         assert name not in TEXT, f"canonical-write shortcut present: {name}"
 
 
-def test_rule_version_record_is_never_written():
-    """RuleVersionRecord storage exists but must not be constructed yet."""
-    assert "RuleVersionRecord(" not in TEXT.replace("class RuleVersionRecord", "")
+def test_only_finalization_creates_a_rule_version():
+    """A canonical version may be minted from exactly one place."""
+    tree = ast.parse(TEXT)
+    constructions = [
+        n.lineno for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and ast.unparse(n.func) == "RuleVersionRecord"
+    ]
+    assert len(constructions) == 1, constructions
+    lo, hi = _span(tree, "finalize_case")
+    assert lo <= constructions[0] <= hi, "rule versions must only come from finalize_case"
+
+
+def test_the_model_never_reaches_the_web_in_re_adjudication():
+    tree = ast.parse(TEXT)
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "resolve_challenge"
+    )
+    body = ast.unparse(fn)
+    for call in ["gl.nondet.web", "web.get", "web.render"]:
+        assert call not in body, f"re-adjudication must not retrieve: {call}"
 
 
 def test_stale_binding_check_exists():

@@ -33,8 +33,8 @@ def test_config_reports_identity_and_versions(direct_vm, direct_deploy, direct_a
     c = direct_deploy(CONTRACT)
     cfg = c.get_config()
     assert cfg["contract_name"] == "DEFI_RULEBOOK"
-    assert cfg["contract_version"] == "0.5.0-stage5"
-    assert cfg["schema_version"] == "4"
+    assert cfg["contract_version"] == "0.6.0-stage6"
+    assert cfg["schema_version"] == "5"
     assert cfg["dimension_set_version"] == "1"
     assert cfg["case_fingerprint_scheme"] == "DRB-CASE-FP-v1"
 
@@ -65,7 +65,7 @@ def test_caps_match_approved_architecture(direct_vm, direct_deploy, direct_alice
     assert caps["max_cases_per_rule"] == 50
     assert caps["max_evidence_per_case"] == 8
     assert caps["max_evidence_per_source_key"] == 3
-    assert caps["max_challenges_per_case"] == 2
+    assert caps["max_challenges_per_case"] == 3
     assert caps["max_excerpt_len"] == 2000
     assert caps["max_anchor_count"] == 3
     assert caps["max_rule_text_len"] == 600
@@ -192,7 +192,9 @@ def test_challenge_grounds_are_bounded(direct_vm, direct_deploy, direct_alice):
     direct_vm.sender = direct_alice
     c = direct_deploy(CONTRACT)
     grounds = c.get_vocabularies()["challenge_grounds"]
-    assert len(grounds) == 7
+    # One ground per semantic dimension, plus a schema defect.
+    assert len(grounds) == 8
+    assert all(g.endswith("_ERROR") for g in grounds)
     assert "IMPLEMENTATION_CONTRADICTION_OMITTED" not in grounds
 
 
