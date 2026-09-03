@@ -17,7 +17,7 @@ import unicodedata
 # proposer bonds.
 
 CONTRACT_NAME = "DEFI_RULEBOOK"
-CONTRACT_VERSION = "0.9.0-rc2"
+CONTRACT_VERSION = "0.10.0-rc3"
 SCHEMA_VERSION = "7"
 
 # ---------------------------------------------------------------------------
@@ -1850,14 +1850,60 @@ class DefiRulebook(gl.Contract):
         )
 
         lines.append("")
+        lines.append("DECISION DERIVATION")
+        lines.append(
+            "The decision is NOT a separate subjective judgement. Assign every "
+            "dimension first, then derive the decision MECHANICALLY from those "
+            "results with the exact rules below. The contract recomputes the "
+            "same decision and rejects any verdict whose decision does not "
+            "match, so do not choose a decision first and fit dimensions to it."
+        )
+        lines.append(
+            "The decision is NOT_ESTABLISHED unless ALL of these hold: "
+            "SOURCE_AUTHORITY is SATISFIED; CLAIM_SUPPORT is SATISFIED; "
+            "CONTRADICTORY_EVIDENCE is SATISFIED; GOVERNANCE_LEGITIMACY is not "
+            "NOT_SATISFIED; SOURCE_INDEPENDENCE is not NOT_SATISFIED; and at "
+            "least one evidence item has a claimed_type other than "
+            "GOVERNANCE_PROPOSAL or THIRD_PARTY_ANALYSIS."
+        )
+        if case.case_type == CASE_TYPE_RULE_DRIFT:
+            lines.append(
+                "For this RULE_DRIFT, additionally TEMPORAL_VALIDITY must be "
+                "SATISFIED and EXISTING_RULE_CONSISTENCY must be SATISFIED; if "
+                "either is UNCLEAR or NOT_SATISFIED the decision is "
+                "NOT_ESTABLISHED."
+            )
+            lines.append(
+                "Contrast with a RULE_CLAIM: a claim may establish with "
+                "TEMPORAL_VALIDITY UNCLEAR, but this drift may not."
+            )
+        else:
+            lines.append(
+                "For this RULE_CLAIM, TEMPORAL_VALIDITY may be SATISFIED or "
+                "UNCLEAR - only NOT_SATISFIED blocks it. Do NOT lower the "
+                "decision to NOT_ESTABLISHED merely because TEMPORAL_VALIDITY "
+                "is UNCLEAR."
+            )
+            lines.append(
+                "Worked example: SOURCE_AUTHORITY, SOURCE_INDEPENDENCE, "
+                "GOVERNANCE_LEGITIMACY, CLAIM_SUPPORT and CONTRADICTORY_EVIDENCE "
+                "all SATISFIED, TEMPORAL_VALIDITY UNCLEAR, with a non-weak "
+                "source -> decision MUST be ESTABLISHED."
+            )
+        lines.append(
+            "If every establishment condition above is met, decision = "
+            "ESTABLISHED; otherwise decision = NOT_ESTABLISHED."
+        )
+
+        lines.append("")
         lines.append("OUTPUT")
         lines.append(
             "Return JSON only, with exactly these keys: decision, dimensions, "
             "evidence_used, contradictions, summary."
         )
         lines.append(
-            "decision must be ESTABLISHED or NOT_ESTABLISHED. Weak evidence is "
-            "NOT_ESTABLISHED. Conflicting evidence is NOT_ESTABLISHED."
+            "decision must be ESTABLISHED or NOT_ESTABLISHED, derived by the "
+            "DECISION DERIVATION rules above."
         )
         lines.append(
             "dimensions must be a list of objects with exactly the keys name, "

@@ -328,3 +328,61 @@ Snapshots: **2/2 first-try convergence** on the immutable static source. Adjudic
 ## G5. Remaining RC2 lifecycle (in progress)
 
 Still to run: challenge + resolution (needs a second, non-reporter wallet), **finalization (requires the real 72h challenge window to elapse — deadline ~Sep 6 2026 18:54 UTC)**, RuleVersion v1, real GEN payout, RULE_DRIFT -> v2 lineage, and the frontend read/write walk against RC2. These are pending; Stage 10B is **not** complete.
+
+---
+
+# SECTION H — RC2 challenge resolution: two live attempts, a second defect, and RC3
+
+After CP18 established `v_1` on RC2, the challenge lifecycle (CP19-CP22) surfaced a second, distinct prompt defect. **Both resolution attempts left state fully intact — the safety architecture is now live-verified twice over — but RC2 is superseded by RC3.**
+
+## H1. CP19-CP20 — challenge opened (PASS)
+
+From a second wallet `0x082a657bAA2ea66a3cfeD6dbeFeF18135d43a735`, tx `0x224545…6407` (Accepted): `open_challenge(c_1, "TEMPORAL_VALIDITY_ERROR", …, ["e_1"])` -> challenge `ch_1` OPEN, targets `v_1`, case `CHALLENGED`, `finalizable=false`, `open_to_new=false`. The reporter-self-challenge guard and one-at-a-time rule both held.
+
+## H2. CP21 attempt 1 — `Undetermined`, clean rollback (SAFETY PASS)
+
+tx `0xeb5efa…dbde`, `resolve_challenge(ch_1)`: **Consensus `Undetermined`** (3 rotations), GenVM `SUCCESS`, return `REJECTED`. The leader's shown verdict was a well-formed `ESTABLISHED` with correct polarity, but the 5 validators did not converge.
+
+Authoritative re-read: case still `CHALLENGED`, `verdict_count=1`, `ch_1` still `OPEN`, only `v_1` present, bond `LOCKED`, 1 GEN. **Nothing committed.** The `REJECTED` return was correctly ignored. This is *validator variance on a nondeterministic re-adjudication* — not a defect.
+
+## H3. CP21 attempt 2 — `Accepted` + GenVM `Rollback`, clean (SAFETY PASS) and the defect
+
+tx `0x9dd0ea…22bb`, `resolve_challenge(ch_1)`: **Consensus `Accepted`, GenVM `ERROR / Rollback`**, `[MALFORMED_VERDICT] decision NOT_ESTABLISHED contradicts its own dimensions`, return `NOT_ESTABLISHED`. The leader's verdict:
+
+```
+SOURCE_AUTHORITY        SATISFIED
+SOURCE_INDEPENDENCE     SATISFIED
+GOVERNANCE_LEGITIMACY   SATISFIED
+TEMPORAL_VALIDITY       UNCLEAR
+CLAIM_SUPPORT           SATISFIED
+CONTRADICTORY_EVIDENCE  SATISFIED     <- RC2 polarity fix working
+decision                NOT_ESTABLISHED  <- but the gate derives ESTABLISHED
+reason: "TEMPORAL_VALIDITY is UNCLEAR, which is sufficient to prevent ESTABLISHED."
+```
+
+Authoritative re-read: identical intact state (case `CHALLENGED`, `verdict_count=1`, `ch_1` `OPEN`, only `v_1`, bond `LOCKED`, 1 GEN). **Nothing committed.** The `NOT_ESTABLISHED` return was correctly ignored.
+
+**Second finding — `CONTRACT_DEFECT`: adjudication-prompt decision-derivation gap.** The dimensions are correctly polarised (RC2 fix intact), but the model chose `NOT_ESTABLISHED` while the deterministic gate derives `ESTABLISHED` for a RULE_CLAIM with `TEMPORAL_VALIDITY=UNCLEAR`. The prompt never told the model the gate's decision-derivation rules, so it guessed and mismatched. Systematic for the common single-undated-source claim; **not a safety defect** (rollback clean).
+
+## H4. Live-verified classifications
+
+| Property | Result |
+|---|---|
+| RC2 dimension-polarity fix (`CONTRADICTORY_EVIDENCE=SATISFIED` when no contradiction) | **LIVE VERIFIED** (CP17, CP21 both) |
+| Atomic rollback on `Undetermined` (no partial state) | **LIVE VERIFIED** (CP21 attempt 1) |
+| Atomic rollback on `Accepted`+malformed (no partial state) | **LIVE VERIFIED** (CP21 attempt 2) |
+| Authoritative reads override misleading `REJECTED`/`NOT_ESTABLISHED` returns | **LIVE VERIFIED** |
+| Adjudication decision-derivation prompt | **BLOCKED** -> RC3 |
+
+The consensus-safety architecture is **not** failed — it is doubly proven. The blocked item is prompt clarity only.
+
+## H5. Superseded deployments (locked test funds — track, do not clean up yet)
+
+- **RC1** `0x187Ce71645Dd2a9FDa660b0820874d9ab34821aB` — case `c_1` `EVIDENCE_FROZEN`, 1 GEN locked.
+- **RC2** `0x969451745c8c1F7f5baD93b3D202a8300936Eb96` — case `c_1` `CHALLENGED`, `ch_1` OPEN (unresolvable due to the decision-derivation defect), `v_1 ESTABLISHED`, 1 GEN locked.
+
+Both remain untouched; no further writes were sent to either. Cleanup (e.g. permissionless exits to recover the 2 GEN) is deferred to a separate decision.
+
+## H6. Resolution — RC3
+
+RC3 (`docs/RC3_DECISION_DERIVATION_FIX.md`, `contract_version 0.10.0-rc3`, SHA `29307e7e…7de6`) adds the gate's exact decision-derivation rules to the prompt (prompt-only; gate/storage/ABI unchanged). The RC2 polarity fix is preserved. Stage 10B restarts on RC3 after manual redeploy.

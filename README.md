@@ -7,11 +7,12 @@ Turn protocol documentation into something users can challenge.
 A challengeable, versioned, evidence-backed source of truth for DeFi protocol
 commitments, built as a GenLayer Intelligent Contract plus a read-first frontend.
 
-**Status: Stage 10B - live testing found a prompt-polarity defect in RC1; RC2 prepared (prompt-only fix), pending manual redeploy.**
+**Status: Stage 10B - RC2 live-verified the polarity fix and consensus-safety, but exposed a second prompt defect (decision-derivation); RC3 prepared (prompt-only), pending manual redeploy.**
 
 - RC1 (StudioNet, superseded test deployment): `0x187Ce71645Dd2a9FDa660b0820874d9ab34821aB`
 - RC1 source SHA-256: `49df4bcfea0e4866710e4fbf8cdcba6fab9571a83de5ee207af633cbbcb6e06b`
-- RC2 source SHA-256: `8fc62f6be8cf4d278d1da62352abc3d287b237a0e279f6f9709fca0fcbcb7d53` (awaiting redeploy) Nothing
+- RC2 (StudioNet, superseded): `0x969451745c8c1F7f5baD93b3D202a8300936Eb96` (sha `8fc62f6b…`)
+- RC3 source SHA-256: `29307e7e8b94b8abd5239d184f41d7ec61f5ef03ccc8813b2eb7ecbe76ec7de6` (awaiting redeploy) Nothing
 is deployed by Claude and no live GEN has moved. The contract implements the
 full lifecycle: protocol registry, rule shells, RULE_CLAIM and RULE_DRIFT cases,
 evidence submission and deterministic freeze, evidence snapshots through the
@@ -35,6 +36,7 @@ The Rule Explorer frontend reads it directly - no backend, no indexer.
 - Live verification plan: [docs/STAGE_10B_LIVE_VERIFICATION_PLAN.md](docs/STAGE_10B_LIVE_VERIFICATION_PLAN.md)
 - Live verification report: [docs/STAGE_10B_LIVE_VERIFICATION_REPORT.md](docs/STAGE_10B_LIVE_VERIFICATION_REPORT.md)
 - RC2 polarity fix: [docs/RC2_PROMPT_POLARITY_FIX.md](docs/RC2_PROMPT_POLARITY_FIX.md)
+- RC3 decision-derivation fix: [docs/RC3_DECISION_DERIVATION_FIX.md](docs/RC3_DECISION_DERIVATION_FIX.md)
 
 ```
 contracts/   defi_rulebook.py - canonical production Intelligent Contract
