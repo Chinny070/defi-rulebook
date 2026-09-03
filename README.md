@@ -6,7 +6,7 @@ A challengeable, versioned, evidence-backed source of truth for the rules users 
 
 - **Canonical contract (RC3):** `0xD4C6d6B5002ADdC8386510687fA799494AA86d44`
 - **Network:** GenLayer StudioNet
-- **Live Rule Explorer:** https://frontend-eight-alpha-82.vercel.app
+- **Live Rule Explorer:** https://defi-rulebook.vercel.app
 - **GitHub:** https://github.com/Chinny070/defi-rulebook
 - **Contract version:** `0.10.0-rc3` · **source SHA-256:** `29307e7e8b94b8abd5239d184f41d7ec61f5ef03ccc8813b2eb7ecbe76ec7de6`
 
