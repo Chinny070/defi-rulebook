@@ -386,3 +386,19 @@ Both remain untouched; no further writes were sent to either. Cleanup (e.g. perm
 ## H6. Resolution — RC3
 
 RC3 (`docs/RC3_DECISION_DERIVATION_FIX.md`, `contract_version 0.10.0-rc3`, SHA `29307e7e…7de6`) adds the gate's exact decision-derivation rules to the prompt (prompt-only; gate/storage/ABI unchanged). The RC2 polarity fix is preserved. Stage 10B restarts on RC3 after manual redeploy.
+
+---
+
+# SECTION I — RC3 canonical deployment
+
+**RC3 is now the canonical Stage 10B live-verification deployment**, superseding RC1 and RC2.
+
+| | |
+|---|---|
+| Contract | `0xD4C6d6B5002ADdC8386510687fA799494AA86d44` |
+| Network | GenLayer StudioNet |
+| Candidate | RC3 (`contract_version 0.10.0-rc3`) |
+| Source SHA-256 | `29307e7e8b94b8abd5239d184f41d7ec61f5ef03ccc8813b2eb7ecbe76ec7de6` |
+| owner / sink | `0x082a657bAA2ea66a3cfeD6dbeFeF18135d43a735` (deployed from the second wallet) |
+
+Identity verified live: `contract_version 0.10.0-rc3`, `schema_version 7`, `paused false`, `case_bond 1 GEN`, economics 5000/2500, `bond_visible_to_adjudication false`, all counters 0, balance 0 GEN. Superseded RC1 (`0x187Ce7…`) and RC2 (`0x969451…`) remain untouched with 1 GEN each locked. The live lifecycle log against RC3 follows below.
