@@ -29,6 +29,7 @@ import {
   SnapshotEvidence,
   SubmitEvidence,
 } from "./actions/CaseActions";
+import { CaseExits } from "./actions/CaseExits";
 
 export default function CaseDetail() {
   const { id = "" } = useParams();
@@ -128,6 +129,14 @@ export default function CaseDetail() {
                   </span>
                 </li>
               </ol>
+            </Panel>
+
+            <Panel title="Release the rule">
+              <p className="muted small">
+                A rule allows one active case at a time. These permissionless exits
+                release the lock when a case can no longer proceed.
+              </p>
+              <CaseExits record={c} onDone={reloadAll} />
             </Panel>
 
             {c.status === "EVIDENCE_OPEN" && (
