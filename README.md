@@ -7,10 +7,11 @@ Turn protocol documentation into something users can challenge.
 A challengeable, versioned, evidence-backed source of truth for DeFi protocol
 commitments, built as a GenLayer Intelligent Contract plus a read-first frontend.
 
-**Status: Stage 10B - RC1 deployed to StudioNet; live reads verified, write-path convergence pending user-signed execution.**
+**Status: Stage 10B - live testing found a prompt-polarity defect in RC1; RC2 prepared (prompt-only fix), pending manual redeploy.**
 
-- Canonical contract (StudioNet): `0x187Ce71645Dd2a9FDa660b0820874d9ab34821aB`
-- RC1 source SHA-256: `49df4bcfea0e4866710e4fbf8cdcba6fab9571a83de5ee207af633cbbcb6e06b` Nothing
+- RC1 (StudioNet, superseded test deployment): `0x187Ce71645Dd2a9FDa660b0820874d9ab34821aB`
+- RC1 source SHA-256: `49df4bcfea0e4866710e4fbf8cdcba6fab9571a83de5ee207af633cbbcb6e06b`
+- RC2 source SHA-256: `8fc62f6be8cf4d278d1da62352abc3d287b237a0e279f6f9709fca0fcbcb7d53` (awaiting redeploy) Nothing
 is deployed by Claude and no live GEN has moved. The contract implements the
 full lifecycle: protocol registry, rule shells, RULE_CLAIM and RULE_DRIFT cases,
 evidence submission and deterministic freeze, evidence snapshots through the
@@ -33,6 +34,7 @@ The Rule Explorer frontend reads it directly - no backend, no indexer.
 - Release audit (RC1): [docs/STAGE_10A_PRODUCTION_RELEASE_AUDIT.md](docs/STAGE_10A_PRODUCTION_RELEASE_AUDIT.md)
 - Live verification plan: [docs/STAGE_10B_LIVE_VERIFICATION_PLAN.md](docs/STAGE_10B_LIVE_VERIFICATION_PLAN.md)
 - Live verification report: [docs/STAGE_10B_LIVE_VERIFICATION_REPORT.md](docs/STAGE_10B_LIVE_VERIFICATION_REPORT.md)
+- RC2 polarity fix: [docs/RC2_PROMPT_POLARITY_FIX.md](docs/RC2_PROMPT_POLARITY_FIX.md)
 
 ```
 contracts/   defi_rulebook.py - canonical production Intelligent Contract

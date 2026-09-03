@@ -17,7 +17,7 @@ import unicodedata
 # proposer bonds.
 
 CONTRACT_NAME = "DEFI_RULEBOOK"
-CONTRACT_VERSION = "0.8.0-stage8"
+CONTRACT_VERSION = "0.9.0-rc2"
 SCHEMA_VERSION = "7"
 
 # ---------------------------------------------------------------------------
@@ -169,6 +169,65 @@ DIMENSIONS_CLAIM = (
 )
 DIMENSIONS_DRIFT = DIMENSIONS_CLAIM + (DIM_EXISTING_RULE_CONSISTENCY,)
 DIMENSION_SET_VERSION = "1"
+
+# Explicit polarity for every dimension. The deterministic gate treats
+# SATISFIED as "this criterion supports establishing the claim". A model that
+# reads a dimension name literally can invert that - e.g. reading
+# CONTRADICTORY_EVIDENCE as "SATISFIED = a contradiction exists" - which
+# produced a live UNDETERMINED + malformed verdict on RC1. These definitions
+# are injected into the prompt so SATISFIED always means "supports the claim".
+DIMENSION_POLARITY = {
+    DIM_SOURCE_AUTHORITY: (
+        "SATISFIED = the frozen evidence comes from sufficiently authoritative "
+        "sources for the claimed commitment; NOT_SATISFIED = the sources lack "
+        "sufficient authority or materially conflict in authority; "
+        "UNCLEAR = authority cannot be reliably determined."
+    ),
+    DIM_SOURCE_INDEPENDENCE: (
+        "SATISFIED = the evidence gives sufficient independent support where "
+        "independence is required, or the source structure raises no material "
+        "independence concern; NOT_SATISFIED = the claim materially depends on "
+        "sources that are not sufficiently independent; UNCLEAR = independence "
+        "cannot be reliably determined."
+    ),
+    DIM_GOVERNANCE_LEGITIMACY: (
+        "SATISFIED = where governance evidence is relevant, the commitment "
+        "arose through the protocol's applicable legitimate decision process, "
+        "or legitimacy is otherwise adequately supported; NOT_SATISFIED = the "
+        "commitment depends on a proposal, informal discussion, non-final "
+        "decision, or unauthorized actor; UNCLEAR = legitimacy or finality "
+        "cannot be reliably determined."
+    ),
+    DIM_TEMPORAL_VALIDITY: (
+        "SATISFIED = the evidence is temporally appropriate and not superseded "
+        "by newer authoritative evidence; NOT_SATISFIED = the evidence is "
+        "materially outdated, superseded, premature, or otherwise temporally "
+        "invalid; UNCLEAR = temporal status cannot be reliably established. For "
+        "RULE_DRIFT the newer evidence must support the changed current "
+        "commitment."
+    ),
+    DIM_CLAIM_SUPPORT: (
+        "SATISFIED = the frozen evidence directly and sufficiently supports the "
+        "proposed interpretation; NOT_SATISFIED = the evidence does not "
+        "sufficiently support it or materially supports a different "
+        "interpretation; UNCLEAR = support is too ambiguous to determine."
+    ),
+    DIM_CONTRADICTORY_EVIDENCE: (
+        "SATISFIED = NO unresolved frozen evidence materially contradicts the "
+        "proposed interpretation; NOT_SATISFIED = one or more unresolved frozen "
+        "evidence items materially contradict it; UNCLEAR = a potential "
+        "contradiction cannot be reliably resolved. Note the polarity: no "
+        "contradiction means SATISFIED."
+    ),
+    DIM_EXISTING_RULE_CONSISTENCY: (
+        "SATISFIED = the newer frozen evidence sufficiently establishes that the "
+        "existing canonical rule is stale, superseded, or no longer accurate; "
+        "NOT_SATISFIED = the existing canonical rule remains consistent with the "
+        "best current evidence, so drift is not established; UNCLEAR = the "
+        "evidence cannot reliably establish whether the existing rule remains "
+        "current."
+    ),
+}
 
 FINDING_SATISFIED = "SATISFIED"
 FINDING_NOT_SATISFIED = "NOT_SATISFIED"
@@ -1678,6 +1737,19 @@ class DefiRulebook(gl.Contract):
             "should be adopted, or whether the protocol is safe. Decide only "
             "what the evidence in this package establishes."
         )
+        if case.case_type == CASE_TYPE_RULE_DRIFT:
+            lines.append(
+                "This is a RULE_DRIFT case. The question is whether newer frozen "
+                "authoritative evidence sufficiently establishes that the current "
+                "canonical commitment is stale and that the proposed changed "
+                "commitment is now current - not whether the change is desirable."
+            )
+        else:
+            lines.append(
+                "This is a RULE_CLAIM case. The question is whether frozen "
+                "authoritative evidence sufficiently establishes the proposed "
+                "protocol commitment as operative - not whether it should exist."
+            )
         lines.append("")
         lines.append("RULES OF EVALUATION")
         lines.append(
@@ -1750,9 +1822,32 @@ class DefiRulebook(gl.Contract):
 
         required = self._required_dimensions(case.case_type)
         lines.append("")
+        lines.append("POLARITY - read carefully")
+        lines.append(
+            "For EVERY dimension: SATISFIED means the criterion is met in a way "
+            "that SUPPORTS establishing the claimed commitment. NOT_SATISFIED "
+            "means the criterion materially weighs AGAINST establishing it. "
+            "UNCLEAR means the frozen evidence does not permit a reliable "
+            "determination."
+        )
+        lines.append(
+            "Do NOT read SATISFIED as merely meaning that the thing named by the "
+            "dimension exists. Choose each result by the definition below and "
+            "make the reason explain why that exact result applies."
+        )
+        lines.append("")
         lines.append("DIMENSIONS - answer every one exactly once")
         for name in required:
-            lines.append("- " + name + ": SATISFIED | NOT_SATISFIED | UNCLEAR")
+            lines.append("- " + name + ": " + DIMENSION_POLARITY[name])
+
+        lines.append("")
+        lines.append(
+            "Example (valid): CONTRADICTORY_EVIDENCE result SATISFIED, reason "
+            "'No frozen evidence materially contradicts the interpretation.' "
+            "Example (INVALID - do not do this): CONTRADICTORY_EVIDENCE result "
+            "NOT_SATISFIED with reason 'No evidence contradicts the claim' - that "
+            "reason describes SATISFIED, so the result must be SATISFIED."
+        )
 
         lines.append("")
         lines.append("OUTPUT")

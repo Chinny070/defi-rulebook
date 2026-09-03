@@ -26,7 +26,7 @@ Stage 10B splits cleanly into two halves:
 
 So this report does two things honestly: it records the **live read verification I performed** (Section A), and it hands you a **precise, ready-to-run write runbook** (Section B) whose results you paste back so the convergence data can be tabulated. Nothing in the write half is faked, assumed, or reported as passed.
 
-**Overall Stage 10B verdict: `PASS_WITH_LIMITATIONS`** — every read-side check passed against the live contract; the write-side lifecycle and convergence measurement are **pending your signed execution** and are not claimed as proven.
+**Overall Stage 10B verdict (RC1): `BLOCKED` — a production-blocking adjudication-prompt defect was found live at CP17 and RC1 is superseded by RC2.** Reads all passed; the write lifecycle ran live and correctly through CP16 (including the first real GEN bond and a live validator-converged web snapshot); **CP17 (adjudication) surfaced a prompt-polarity defect.** Safety held perfectly under it (clean rollback), but the defect makes legitimate claims un-establishable, so live testing against RC1 was stopped by design. The full live log and finding are in **Section F**; the fix is **RC2** (see `RC2_PROMPT_POLARITY_FIX.md`).
 
 ---
 
@@ -207,3 +207,52 @@ Live convergence still **unmeasured** (that is the pending write half); queued-t
 ## E. Confirmations
 
 No redeployment occurred · canonical address unchanged · **RC1 source byte-identical (`49df4bcf…`)** · no backend added · frontend not publicly deployed · no demo/submission work · **no write transaction was broadcast and no GEN was moved by Claude** · next stage not started.
+
+---
+
+# SECTION F — Live write execution log (RC1) and the CP17 finding
+
+Executed interactively, one checkpoint at a time; the user signed every write from wallet `0xaffE…e70b`. After each write I re-read authoritative state live before marking it verified.
+
+## F1. Checkpoint log (RC1 @ `0x187Ce71645Dd2a9FDa660b0820874d9ab34821aB`)
+
+| CP | Method | Tx hash | Status | Consensus | Return | Verified post-state |
+|---|---|---|---|---|---|---|
+| 1 | `register_protocol` | `0xce1bd6…a022` | ACCEPTED | Accepted | `drb-live-test-1` | `protocols=1`; registrant `0xaffE…e70b`; `officially_verified=false`, `rule_count=0` |
+| 3 | `propose_rule` | `0x22ac8e…bd8c` | ACCEPTED | Accepted | `r_1` | `rule_seq=1`; `FEES`/`Swap fee`; `UNVERIFIED`, `current_version=0`, **no text field** |
+| 5 | `open_rule_claim` | `0x6a2c1b…596f` | ACCEPTED | Accepted | `c_1` | `RULE_CLAIM`, `expected_version=0`, `EVIDENCE_OPEN`; rule `active_case_id=c_1` |
+| 7 | `lock_bond` (**1 GEN**) | `0x527d60…e5ee` | ACCEPTED | Accepted | `b_1` | bond `LOCKED`, `amount=1e18`, recipients frozen to `0xaffE…e70b`; **contract balance = 1.0 GEN** |
+| 9 | `submit_evidence` | `0xfa20a3…9a11` | FINALIZED | Accepted | `e_1` | `SUBMITTED`; `source_key=raw.githubusercontent.com/Uniswap`; anchors stored; `claimed_published_known=false` |
+| 12 | `freeze_evidence` | `0xca3f62…8b78` | FINALIZED | Accepted | `64eda8a7…1a81e` | `EVIDENCE_FROZEN`; `evidence_ids=["e_1"]`; fingerprint matches |
+| 14 | `snapshot_evidence` | `0x20091d…fc01` | ACCEPTED | **Accepted** | `SNAPSHOT_COMPLETE` | excerpt 1948 chars, fingerprint `36e07531…48f56`; **read twice, byte-identical**; `ready_for_adjudication=true` |
+| 17 | `request_adjudication` | `0x2cc1cd…457e` | FINALIZED | **Undetermined** (rot 3) | — (Rollback) | **case unchanged** `EVIDENCE_FROZEN`, `verdict_seq=0`, `[]`, bond `LOCKED`, balance 1 GEN |
+
+CP2/4/6/8/11/13/16 were the verification reads I performed after each write (all confirming the expected transition). CP10 and CP15 were correctly skipped (single, non-weak evidence item).
+
+## F2. The CP17 finding
+
+**Classification: `CONTRACT_DEFECT` — adjudication-prompt polarity ambiguity.**
+**Safety result: `PASS`. Semantic usability result: `BLOCKED`.**
+
+At CP17 the model returned `decision=ESTABLISHED` with every dimension `SATISFIED` **except** `CONTRADICTORY_EVIDENCE=NOT_SATISFIED`, reasoned *"No evidence contradicts the proposed interpretation."* The deterministic validator correctly rejected it — `[MALFORMED_VERDICT] decision ESTABLISHED contradicts its own dimensions` — and GenVM rolled back atomically; consensus reported `Undetermined` after 3 rotations.
+
+**Root cause:** RC1's prompt listed each dimension as a bare `NAME: SATISFIED | NOT_SATISFIED | UNCLEAR`, with **no per-dimension polarity definition.** The gate treats `SATISFIED` as *"this criterion supports the claim,"* but read by its bare name, `CONTRADICTORY_EVIDENCE` naturally inverts to *"SATISFIED = a contradiction exists."* A well-behaved model that correctly found no contradiction therefore output `NOT_SATISFIED`, which under the gate forces `NOT_ESTABLISHED` and contradicts the model's own `ESTABLISHED`. This is systematic, not variance: it would block legitimate claims across the board.
+
+**Why this is not a safety defect.** The live transaction proved two of the Stage-10A release-blocking conditions hold in production: *malformed model output cannot mutate state*, and *UNDETERMINED leaves no partial semantic state.* The validator + atomic rollback behaved exactly as designed; the bond and evidence were untouched.
+
+**Why unit tests missed it.** The Stage-5 adjudication tests fed **mock** verdicts already written in the gate's polarity, so they never exercised a real model's natural reading of the bare dimension names. Only live adjudication with a real LLM surfaced it — which is exactly the purpose of Stage 10B.
+
+**Resolution:** RC2 makes the polarity of all seven dimensions explicit in the prompt (prompt-only change; storage, ABI, gate and economics unchanged). The exact failing output is captured as a regression test (`tests/direct/test_rc2_polarity.py::test_rc1_live_inverted_pairing_is_still_rejected`) alongside the corrected, accepted verdict. Details in `docs/RC2_PROMPT_POLARITY_FIX.md`.
+
+## F3. RC1 disposition
+
+RC1 remains deployed at `0x187Ce71645Dd2a9FDa660b0820874d9ab34821aB` with case `c_1` `EVIDENCE_FROZEN`, bond `b_1` `LOCKED`, and **1.0 GEN held in the contract**. That 1 GEN is not lost — it is the proposer bond, still locked against a case that cannot be adjudicated on RC1. Whether to exercise a safe exit on RC1 (e.g. the permissionless `abandon_expired_case` once the 7-day evidence window lapses, which refunds the bond in full) is deferred to a separate decision; **no further writes were sent to RC1.** RC1 is documented as a **superseded test deployment**; RC2 will deploy to a new address.
+
+## F4. Live convergence data so far (small sample, RC1)
+
+| Operation | Source class / mode | Attempts | Committed | Undetermined | Failed |
+|---|---|---|---|---|---|
+| Snapshot | static raw-GitHub / `GET` | 1 | 1 (Accepted) | 0 | 0 |
+| Adjudication | claim, 1 official source | 1 | 0 | 1 (prompt defect) | 0 |
+
+The single snapshot result is a genuine, encouraging live data point — GenVM web retrieval **converged first-try** on an immutable static source. The adjudication sample is not a convergence measurement of the model; it is the defect above. Both will be re-measured on RC2 with a larger sample.
