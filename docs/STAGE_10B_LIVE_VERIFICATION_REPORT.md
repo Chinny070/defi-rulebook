@@ -402,3 +402,43 @@ RC3 (`docs/RC3_DECISION_DERIVATION_FIX.md`, `contract_version 0.10.0-rc3`, SHA `
 | owner / sink | `0x082a657bAA2ea66a3cfeD6dbeFeF18135d43a735` (deployed from the second wallet) |
 
 Identity verified live: `contract_version 0.10.0-rc3`, `schema_version 7`, `paused false`, `case_bond 1 GEN`, economics 5000/2500, `bond_visible_to_adjudication false`, all counters 0, balance 0 GEN. Superseded RC1 (`0x187Ce7…`) and RC2 (`0x969451…`) remain untouched with 1 GEN each locked. The live lifecycle log against RC3 follows below.
+
+## I2. RC3 checkpoint log
+
+| CP | Method | Tx hash | Status | Consensus | Return | Verified |
+|---|---|---|---|---|---|---|
+| 1 | `register_protocol` | `0xe53cc6…8ba3` | ACCEPTED | Accepted | `drb-live-test-1` | `protocols=1` |
+| 3 | `propose_rule` | `0xfc7054…f5a5` | FINALIZED | Accepted | `r_1` | `UNVERIFIED`, no text |
+| 5 | `open_rule_claim` | `0xfbf9af…924c` | ACCEPTED | Accepted | `c_1` | `RULE_CLAIM`, exp_ver 0, lock set |
+| 7 | `lock_bond` (1 GEN) | `0x56ea31…c6d0` | ACCEPTED | Accepted | `b_1` | `LOCKED`; balance 1 GEN |
+| 9 | `submit_evidence` | `0x68b2bd…441a` | ACCEPTED | Accepted | `e_1` | `SUBMITTED`; anchors ok |
+| 12 | `freeze_evidence` | `0xc840b0…5181` | ACCEPTED | Accepted | `64eda8a7…1a81e` | `EVIDENCE_FROZEN` |
+| 14 | `snapshot_evidence` | `0x9ee4a5…000f` | ACCEPTED | **Accepted** | `SNAPSHOT_COMPLETE` | fp `36e07531…`; ready |
+| 17 | `request_adjudication` | `0x1ef2b1…c088` | ACCEPTED | **Accepted** | **`ESTABLISHED`** | `v_1`; TEMPORAL UNCLEAR -> ESTABLISHED |
+| 19 | `open_challenge` (wallet 2) | `0x8b1392…9ad3` | ACCEPTED | Accepted | `ch_1` | `CHALLENGED` |
+| 21 | `resolve_challenge` | `0xf6b89f…4e26` | ACCEPTED | **Accepted** | `REJECTED` | `v_2` appended; `ch_1` REJECTED |
+
+## I3. RC3 decision-derivation fix — LIVE VERIFIED (both paths)
+
+The RC2 failure case now commits on RC3, in both the initial adjudication and the re-adjudication:
+
+| | RC2 (`0x969451…`) | RC3 (`0xD4C6d6…`) |
+|---|---|---|
+| Initial adjudication, TEMPORAL_VALIDITY UNCLEAR | ESTABLISHED (CP17 happened to match) | **ESTABLISHED** (CP17), model cites "the stated rules" |
+| Re-adjudication with the same UNCLEAR temporal | attempt 1 Undetermined (variance); attempt 2 **malformed** (decision mismatch) | **committed ESTABLISHED** (CP21), model cites "the derivation rules", challenge REJECTED |
+
+RC3 verdict `v_1` and re-adjudicated `v_2` both carry `TEMPORAL_VALIDITY=UNCLEAR` with `decision=ESTABLISHED` and `CONTRADICTORY_EVIDENCE=SATISFIED` - both prompt fixes working together. Append-only lineage confirmed: `v_1` preserved unchanged, `v_2 replaces v_1`, challenge `resulting_verdict_id=v_2`.
+
+## I4. RC3 convergence (cumulative)
+
+| Operation | RC3 attempts | Committed | Undetermined | Malformed |
+|---|---|---|---|---|
+| Snapshot (GET, static raw-GitHub) | 1 | 1 | 0 | 0 |
+| Adjudication (claim, 1 official source) | 1 (CP17) | 1 | 0 | 0 |
+| Re-adjudication (CP21) | 1 | 1 | 0 | 0 |
+
+Cross-deployment: snapshots 3/3 first-try committed; the RC2 decision-mismatch and one RC2 re-adjudication variance-Undetermined are the only non-commits, both eliminated or shown safe.
+
+## I5. Status: WAITING on the finalization window
+
+The remaining lifecycle - `finalize_case` -> RuleVersion v1 -> real GEN payout -> RULE_DRIFT -> v2 lineage -> frontend live write - is gated on the real 72h challenge window. `get_challenge_window` reports `finalizable=false`; the deadline is unix `1788722109` (~Sep 6 2026, 20:35 UTC). No timestamp shortcut exists on a live contract. **Stage 10B is in a documented WAITING state** until then; no further RC3 writes are needed in the interim.
