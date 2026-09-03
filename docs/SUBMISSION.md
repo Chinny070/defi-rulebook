@@ -4,8 +4,8 @@ Copy/paste-ready. All live claims are accurate to the RC3 StudioNet run; time-ga
 
 - **Live contract (RC3):** `0xD4C6d6B5002ADdC8386510687fA799494AA86d44`
 - **Network:** GenLayer StudioNet
-- **GitHub:** *(filled after push — see release report)*
-- **Live website:** *(filled after Vercel deploy — see release report)*
+- **GitHub:** https://github.com/Chinny070/defi-rulebook
+- **Live website:** https://frontend-eight-alpha-82.vercel.app
 
 ---
 
@@ -85,4 +85,4 @@ From the project's domain, the strongest tags are: **DeFi**, **Oracle / Web Data
 >
 > Live on StudioNet: a claim was evidenced, adjudicated ESTABLISHED, challenged, re-adjudicated, and kept in append-only history with a real bond locked. The 72h dispute window is running before finalization — no shortcuts.
 >
-> Explore it (no wallet needed): [live URL]
+> Explore it (no wallet needed): https://frontend-eight-alpha-82.vercel.app
