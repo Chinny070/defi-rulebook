@@ -256,3 +256,75 @@ RC1 remains deployed at `0x187Ce71645Dd2a9FDa660b0820874d9ab34821aB` with case `
 | Adjudication | claim, 1 official source | 1 | 0 | 1 (prompt defect) | 0 |
 
 The single snapshot result is a genuine, encouraging live data point — GenVM web retrieval **converged first-try** on an immutable static source. The adjudication sample is not a convergence measurement of the model; it is the defect above. Both will be re-measured on RC2 with a larger sample.
+
+---
+
+# SECTION G — RC2 live verification (CANONICAL deployment)
+
+**RC2 is now the canonical Stage 10B live-verification deployment.**
+
+| | |
+|---|---|
+| Contract | `0x969451745c8c1F7f5baD93b3D202a8300936Eb96` |
+| Network | GenLayer StudioNet |
+| Candidate | RC2 (`contract_version 0.9.0-rc2`) |
+| Source SHA-256 | `8fc62f6be8cf4d278d1da62352abc3d287b237a0e279f6f9709fca0fcbcb7d53` |
+| Deploy | FINALIZED / SUCCESS / Accepted; initial balance 0 GEN |
+
+RC1 (`0x187Ce71645Dd2a9FDa660b0820874d9ab34821aB`) is the **superseded test deployment** with 1 GEN still locked on its case `c_1`; no further writes were sent to it.
+
+## G1. Identity + config (live reads) — PASS
+
+`get_config` on RC2: `contract_version=0.9.0-rc2`, `schema_version=7`, `paused=false`, `case_bond=1 GEN`, owner/sink `0xaffE…e70b`. Economics `5000/2500`, `bond_visible_to_adjudication=false`. Caps and vocabularies match RC1's approved values (RULE_CLAIM/RULE_DRIFT, 8 grounds, 7 drift dimensions). All counters 0, balance 0 GEN.
+
+## G2. Checkpoint log (RC2)
+
+| CP | Method | Tx hash | Status | Consensus | Return | Verified post-state |
+|---|---|---|---|---|---|---|
+| 1 | `register_protocol` | `0x665a36…554b` | FINALIZED | Accepted | `drb-live-test-1` | `protocols=1`; `officially_verified=false` |
+| 3 | `propose_rule` | `0x3daca3…f0aa` | ACCEPTED | Accepted | `r_1` | `FEES`/`Swap fee`, `UNVERIFIED`, no text |
+| 5 | `open_rule_claim` | `0xc0ec7b…c25e` | ACCEPTED | Accepted | `c_1` | `RULE_CLAIM`, `expected_version=0`; rule lock set |
+| 7 | `lock_bond` (**1 GEN**) | `0x57dffd…ad64` | ACCEPTED | Accepted | `b_1` | `LOCKED`, recipients frozen; **balance 1.0 GEN** |
+| 9 | `submit_evidence` | `0x0c95c7…c3ad` | FINALIZED | Accepted | `e_1` | `SUBMITTED`; anchors + source_key correct |
+| 12 | `freeze_evidence` | `0x602ed2…17dd` | ACCEPTED | Accepted | `64eda8a7…1a81e` | `EVIDENCE_FROZEN`; `evidence_ids=["e_1"]` |
+| 14 | `snapshot_evidence` | `0xfd7296…4d65` | ACCEPTED | **Accepted** | `SNAPSHOT_COMPLETE` | excerpt 1948, fp `36e07531…48f56`; `ready=true` |
+| 17 | `request_adjudication` | `0xcf09b0…6046` | FINALIZED | **Accepted** | **`ESTABLISHED`** | `VERDICT_PROPOSED`; `v_1` ESTABLISHED; see G3 |
+
+## G3. The polarity-fix regression result — PASS
+
+The case identical to the RC1 CP17 failure now commits. Verdict `v_1` dimensions on RC2:
+
+```
+SOURCE_AUTHORITY        SATISFIED
+SOURCE_INDEPENDENCE     SATISFIED
+GOVERNANCE_LEGITIMACY   SATISFIED
+TEMPORAL_VALIDITY       UNCLEAR      (claim: UNCLEAR permitted by the gate)
+CLAIM_SUPPORT           SATISFIED
+CONTRADICTORY_EVIDENCE  SATISFIED    reason: "No frozen evidence materially contradicts..."
+```
+
+Direct RC1 -> RC2 comparison for the same no-contradiction finding on the same evidence:
+
+| | RC1 (`0x187Ce7…`) | RC2 (`0x969451…`) |
+|---|---|---|
+| CONTRADICTORY_EVIDENCE | NOT_SATISFIED (inverted) | **SATISFIED** |
+| model decision vs gate | contradictory -> MALFORMED | consistent -> accepted |
+| consensus | Undetermined (rot 3) | **Accepted** |
+| verdict written | none (rollback) | **v_1 ESTABLISHED** |
+
+**The prompt-polarity defect is resolved in production.** Post-state verified live: `verdict_count 0->1`, `verdict_seq 0->1`, case `EVIDENCE_FROZEN -> VERDICT_PROPOSED`, snapshot digest unchanged, bond `LOCKED`, balance 1 GEN, challenge window open.
+
+## G4. Convergence data (RC2, cumulative with RC1)
+
+| Operation | Source / mode | Attempts | Committed | Undetermined | Failed |
+|---|---|---|---|---|---|
+| Snapshot (RC1) | static raw-GitHub / GET | 1 | 1 | 0 | 0 |
+| Snapshot (RC2) | static raw-GitHub / GET | 1 | 1 | 0 | 0 |
+| Adjudication (RC1) | claim, 1 official source | 1 | 0 | 1 (prompt defect, now fixed) | 0 |
+| Adjudication (RC2) | claim, 1 official source | 1 | **1 (ESTABLISHED)** | 0 | 0 |
+
+Snapshots: **2/2 first-try convergence** on the immutable static source. Adjudication on RC2: 1/1 committed after the fix. Small sample; broader source-class measurement remains for the continued run.
+
+## G5. Remaining RC2 lifecycle (in progress)
+
+Still to run: challenge + resolution (needs a second, non-reporter wallet), **finalization (requires the real 72h challenge window to elapse — deadline ~Sep 6 2026 18:54 UTC)**, RuleVersion v1, real GEN payout, RULE_DRIFT -> v2 lineage, and the frontend read/write walk against RC2. These are pending; Stage 10B is **not** complete.
