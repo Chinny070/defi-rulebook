@@ -39,10 +39,10 @@ Ordinary smart contracts handle the numbers, deadlines, bonds, versioning and ch
 
 ## How to test (steward-verifiable)
 1. Open the live website (no wallet needed) and go to the protocol `drb-live-test-1`.
-2. Open rule `r_1` ("Swap fee") → case `c_1`. Observe it is `RE_ADJUDICATED`, awaiting the 72-hour challenge window before finalization.
+2. Open rule `r_1` ("Swap fee") → case `c_1`. It is currently `CHALLENGED` with an open challenge (`ch_2`).
 3. Open the evidence `e_1` — the frozen Uniswap-docs source, its GET retrieval, anchors, the bounded excerpt and its fingerprint (`36e07531…`). Recompute `sha256` over the displayed excerpt to reproduce it.
 4. Open the verdicts: `v_1 ESTABLISHED`, then `v_2 ESTABLISHED` (replacing `v_1`) — append-only.
-5. Open the challenge `ch_1` (`TEMPORAL_VALIDITY_ERROR`) → `REJECTED`, resulting in `v_2`.
+5. Open the challenges: `ch_1` (`TEMPORAL_VALIDITY_ERROR`) → `REJECTED`; and `ch_2` (`SOURCE_AUTHORITY_ERROR`) → `OPEN`. `ch_2` was opened live from this deployed Rule Explorer with a browser wallet (tx `0xb631c378…d4e048`, `FINALIZED`, return `ch_2`) — a demonstration that the live write flow signs, commits, and is then confirmed by re-reading contract state.
 6. Read on-chain directly at `0xD4C6d6B5002ADdC8386510687fA799494AA86d44` (StudioNet): `get_case("c_1")`, `list_case_verdicts("c_1",0,10)`, `list_case_challenges("c_1",0,10)`, `get_evidence_snapshot("e_1")`, `get_bond_state("c_1")` — the site's data matches contract state exactly, with no backend.
 
 ## Steward-verifiable outcome
@@ -51,7 +51,7 @@ A steward can verify that a protocol-rule claim was backed by frozen live public
 Disclosure: the current RC3 case is awaiting the production 72-hour challenge window before canonical finalization. This security window was deliberately not shortened or bypassed for the submission; finalization, canonical RuleVersion minting, GEN payout and the RULE_DRIFT lifecycle are implemented and test-covered (346 tests) and will occur once the window elapses.
 
 ## Known limitations / live status
-- Live-verified: registration, rule, RULE_CLAIM, 1 GEN bond, evidence submission, freeze, GenLayer snapshot (first-try convergence), adjudication → ESTABLISHED, challenge, re-adjudication → ESTABLISHED, challenge REJECTED, append-only verdict history, clean rollback on Undetermined and on malformed output, authoritative-state revalidation.
+- Live-verified: registration, rule, RULE_CLAIM, 1 GEN bond, evidence submission, freeze, GenLayer snapshot (first-try convergence), adjudication → ESTABLISHED, challenge, re-adjudication → ESTABLISHED, challenge REJECTED, append-only verdict history, a second challenge (`ch_2`) opened end-to-end from the deployed Rule Explorer with a browser wallet, clean rollback on Undetermined and on malformed output, authoritative-state revalidation (state re-read overrides a misleading receipt label).
 - Time-gated (not yet live): finalization, canonical RuleVersion v1, this case's GEN payout, RULE_DRIFT lifecycle, RuleVersion v2.
 - Protocol identity is community-maintained, not verified; establishing a commitment is not a guarantee the protocol honors it; adjudication sees only frozen evidence; no challenger bonds in V1.
 

@@ -75,9 +75,9 @@ Any non-reporter may challenge a proposed verdict on one of eight named grounds 
 
 ## Live verification status (StudioNet, RC3)
 
-**Live-verified:** deployment + config reads; protocol registration; rule creation; RULE_CLAIM; real 1 GEN bond lock; live public-evidence submission; freeze; GenLayer web retrieval + snapshot (converged first-try); semantic adjudication → `ESTABLISHED`; challenge; re-adjudication → `ESTABLISHED` → challenge `REJECTED`; append-only verdict history (`v_1`, `v_2 replaces v_1`); clean atomic rollback on both `Undetermined` and malformed output; authoritative-state revalidation overriding misleading receipts.
+**Live-verified:** deployment + config reads; protocol registration; rule creation; RULE_CLAIM; real 1 GEN bond lock; live public-evidence submission; freeze; GenLayer web retrieval + snapshot (converged first-try); semantic adjudication → `ESTABLISHED`; challenge; re-adjudication → `ESTABLISHED` → challenge `REJECTED`; append-only verdict history (`v_1`, `v_2 replaces v_1`); a **second challenge (`ch_2`, `SOURCE_AUTHORITY_ERROR`) opened end-to-end from the deployed Rule Explorer with a browser wallet** — signed, committed, and confirmed by contract-state re-read; clean atomic rollback on both `Undetermined` and malformed output; authoritative-state revalidation overriding misleading receipts.
 
-**Time-gated (implemented + test-covered, not yet live):** finalization of the current case, canonical RuleVersion v1 mint, its GEN payout, the RULE_DRIFT live lifecycle, and canonical RuleVersion v2. The current live case is `RE_ADJUDICATED` and is **awaiting the production 72-hour challenge window before finalization — this window was deliberately not shortened or bypassed.**
+**Time-gated (implemented + test-covered, not yet live):** finalization of the current case, canonical RuleVersion v1 mint, its GEN payout, the RULE_DRIFT live lifecycle, and canonical RuleVersion v2. The current live case is `CHALLENGED` with an open challenge (`ch_2`); its 72-hour challenge window is running and was **deliberately not shortened or bypassed.**
 
 `v_1`/`v_2` above are **verdict** history, not canonical RuleVersions; no canonical RuleVersion is minted until finalization.
 
