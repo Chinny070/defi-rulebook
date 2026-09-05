@@ -51,19 +51,29 @@ export function useWriteFlow<T = unknown>(walletAddress: string | null): WriteFl
         return failure;
       }
 
-      const client = await getWriteClient(effectiveAddress);
       const address = requireAddress();
 
+      // Acquiring the wallet client (which connects to StudioNet and the
+      // GenLayer Snap) can itself fail or prompt. It is obtained inside the
+      // flow's guarded submit step so any failure surfaces in the progress
+      // panel instead of vanishing as an unhandled rejection; the same
+      // instance is reused to wait for the receipt.
+      let client: Awaited<ReturnType<typeof getWriteClient>> | null = null;
+
       const result = await runWrite<T>({
-        submit: () =>
-          client.writeContract({
+        submit: async () => {
+          client = await getWriteClient(effectiveAddress);
+          return client.writeContract({
             address,
             functionName: write.functionName,
             args: write.args,
             value: write.value ?? BigInt(0),
-          }),
-        waitForReceipt: (hash) =>
-          client.waitForTransactionReceipt({ hash, status: "ACCEPTED" }) as Promise<ReceiptLike | null>,
+          });
+        },
+        waitForReceipt: async (hash) => {
+          const c = client ?? (client = await getWriteClient(effectiveAddress));
+          return c.waitForTransactionReceipt({ hash, status: "ACCEPTED" }) as Promise<ReceiptLike | null>;
+        },
         verify: write.verify,
         onProgress: setProgress,
       });
