@@ -51,8 +51,14 @@ export default function App() {
         {wallet.wrongNetwork && (
           <div className="banner warn">
             Wrong network. Switch your wallet to <code>{CHAIN_NAME}</code> before taking
-            any action.
+            any action.{" "}
+            <button className="link" onClick={() => wallet.switchNetwork()} disabled={wallet.switching}>
+              {wallet.switching ? "Switching…" : `Switch to ${CHAIN_NAME}`}
+            </button>
           </div>
+        )}
+        {wallet.error && !wallet.wrongNetwork && (
+          <div className="banner warn">{wallet.error}</div>
         )}
         {!IS_CONFIGURED && (
           <div className="banner warn">

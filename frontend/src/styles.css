@@ -237,3 +237,22 @@ button.ghost { background: transparent; }
   .two-col { grid-template-columns: 1fr; }
   .topbar nav { margin-left: 0; width: 100%; }
 }
+
+/* Wallet action affordances (steward feedback: clear switch/retry paths). */
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent, #3b82f6);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+button.link:disabled { opacity: 0.6; cursor: default; }
+.warn-text { color: var(--warn); }
+.write-actions-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}

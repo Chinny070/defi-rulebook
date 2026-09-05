@@ -7,8 +7,10 @@ const fallback: WalletState = {
   chainId: null,
   wrongNetwork: false,
   connecting: false,
+  switching: false,
   error: null,
   connect: async () => {},
+  switchNetwork: async () => false,
   disconnect: () => {},
 };
 

@@ -16,7 +16,11 @@ export interface WriteFlow<T> {
   progress: WriteProgress | null;
   outcome: WriteOutcome<T> | null;
   busy: boolean;
-  run: (write: ContractWrite<T>) => Promise<WriteOutcome<T>>;
+  /**
+   * Runs the write. `addressOverride` lets a caller that just connected in the
+   * same click pass the fresh address, rather than waiting for a re-render.
+   */
+  run: (write: ContractWrite<T>, addressOverride?: string | null) => Promise<WriteOutcome<T>>;
   reset: () => void;
 }
 
@@ -34,9 +38,10 @@ export function useWriteFlow<T = unknown>(walletAddress: string | null): WriteFl
   }, []);
 
   const run = useCallback(
-    async (write: ContractWrite<T>): Promise<WriteOutcome<T>> => {
+    async (write: ContractWrite<T>, addressOverride?: string | null): Promise<WriteOutcome<T>> => {
       setOutcome(null);
-      if (!walletAddress) {
+      const effectiveAddress = addressOverride ?? walletAddress;
+      if (!effectiveAddress) {
         const failure: WriteOutcome<T> = {
           state: "FAILED",
           message: "Connect a wallet to take this action.",
@@ -46,7 +51,7 @@ export function useWriteFlow<T = unknown>(walletAddress: string | null): WriteFl
         return failure;
       }
 
-      const client = await getWriteClient(walletAddress);
+      const client = await getWriteClient(effectiveAddress);
       const address = requireAddress();
 
       const result = await runWrite<T>({

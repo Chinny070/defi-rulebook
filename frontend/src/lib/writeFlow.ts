@@ -13,6 +13,7 @@
  */
 
 import { classifyReceipt, explainVerdict, type ConsensusVerdict, type ReceiptLike } from "./consensus";
+import { describeWalletError } from "./errors";
 
 export type WriteState =
   | "IDLE"
@@ -95,11 +96,10 @@ export async function runWrite<T>(request: WriteRequest<T>): Promise<WriteOutcom
   try {
     hash = await request.submit();
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     const outcome: WriteOutcome<T> = {
       state: "FAILED",
-      message: "The transaction was not submitted.",
-      error: message,
+      message: describeWalletError(error),
+      error: error instanceof Error ? error.message : String(error),
     };
     report({ ...outcome, state: "FAILED" });
     return outcome;
