@@ -40,12 +40,13 @@ export function getReadClient(): AnyClient {
 /**
  * True when an error is only about MetaMask Snap methods being unsupported.
  *
- * genlayer-js `connect()` calls `wallet_getSnaps` / `wallet_requestSnaps`,
- * which exist only in MetaMask. Non-MetaMask wallets answer with JSON-RPC
- * -32601 ("method has no corresponding handler"). The Snap is a signing
- * convenience, not a requirement: the underlying write is a normal EVM
- * transaction to the consensus contract, which any wallet on StudioNet can
- * sign. So this specific failure is tolerated and the write proceeds.
+ * genlayer-js `connect()` calls `wallet_getSnaps` / `wallet_requestSnaps`;
+ * a wallet without Snap support answers with JSON-RPC -32601 ("method has no
+ * corresponding handler"). Rather than let that abort the whole write, we
+ * tolerate it and attempt the underlying EVM transaction anyway. This is a
+ * best-effort fallback, not a compatibility guarantee: MetaMask (on StudioNet)
+ * is the verified, supported signing path; other wallets are untested and may
+ * still fail to sign a GenLayer transaction.
  */
 function isSnapUnsupported(err: unknown): boolean {
   const e = (err ?? {}) as { code?: number; message?: string };
