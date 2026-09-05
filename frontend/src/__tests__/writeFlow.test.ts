@@ -29,17 +29,35 @@ describe("write flow", () => {
     ]);
   });
 
-  it("reports UNDETERMINED and never verifies when consensus did not decide", async () => {
+  it("reports UNDETERMINED when consensus did not decide and state does not confirm", async () => {
     const request = makeRequest({
       waitForReceipt: vi.fn(async () => ({ statusName: "UNDETERMINED" })),
+      verify: vi.fn(async () => ({ ok: false })),
     });
 
     const outcome = await runWrite(request);
 
     expect(outcome.state).toBe("UNDETERMINED");
     expect(outcome.consensus).toBe("UNDETERMINED");
-    expect(request.verify).not.toHaveBeenCalled();
+    // State is the authority, so we still re-read before concluding undetermined.
+    expect(request.verify).toHaveBeenCalledOnce();
     expect(isSuccess(outcome.state)).toBe(false);
+  });
+
+  it("reports SUCCESS when the receipt looks undetermined but state confirms the change", async () => {
+    // Regression for the live challenge: the SDK receipt read as UNDETERMINED
+    // while the transaction had in fact finalized (ch_2 created). The contract
+    // state, not the receipt label, decides.
+    const request = makeRequest({
+      waitForReceipt: vi.fn(async () => ({ statusName: "UNDETERMINED" })),
+      verify: vi.fn(async () => ({ ok: true, value: "ch_2" })),
+    });
+
+    const outcome = await runWrite(request);
+
+    expect(outcome.state).toBe("SUCCESS");
+    expect(outcome.value).toBe("ch_2");
+    expect(request.verify).toHaveBeenCalledOnce();
   });
 
   it("treats a canceled transaction as FAILED", async () => {
@@ -94,10 +112,14 @@ describe("write flow", () => {
     expect(outcome.hash).toBeUndefined();
   });
 
-  it("never reports success for an unknown receipt shape", async () => {
-    const request = makeRequest({ waitForReceipt: vi.fn(async () => ({}) ) });
+  it("never reports success for an unknown receipt shape when state does not confirm", async () => {
+    const request = makeRequest({
+      waitForReceipt: vi.fn(async () => ({})),
+      verify: vi.fn(async () => ({ ok: false })),
+    });
     const outcome = await runWrite(request);
     expect(outcome.state).toBe("UNDETERMINED");
+    expect(isSuccess(outcome.state)).toBe(false);
   });
 
   it("classifies terminal states", () => {

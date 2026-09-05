@@ -28,6 +28,42 @@ export const TX_STATUS = {
 
 export type TxStatus = (typeof TX_STATUS)[keyof typeof TX_STATUS];
 
+/**
+ * genlayer-js reports a transaction status as a numeric code as well as a
+ * name. A receipt can arrive with only the number (or a numeric string), so
+ * this table lets the classifier resolve either form. Mirrors the SDK's
+ * transactionsStatusNumberToName so tests need no SDK.
+ */
+const STATUS_CODE_TO_NAME: Record<string, string> = {
+  "0": TX_STATUS.UNINITIALIZED,
+  "1": TX_STATUS.PENDING,
+  "2": TX_STATUS.PROPOSING,
+  "3": TX_STATUS.COMMITTING,
+  "4": TX_STATUS.REVEALING,
+  "5": TX_STATUS.ACCEPTED,
+  "6": TX_STATUS.UNDETERMINED,
+  "7": TX_STATUS.FINALIZED,
+  "8": TX_STATUS.CANCELED,
+  "9": TX_STATUS.APPEAL_REVEALING,
+  "10": TX_STATUS.APPEAL_COMMITTING,
+  "11": TX_STATUS.READY_TO_FINALIZE,
+  "12": TX_STATUS.VALIDATORS_TIMEOUT,
+  "13": TX_STATUS.LEADER_TIMEOUT,
+};
+
+/** Resolve a status name from a receipt's string name, string code, or number. */
+export function statusToName(raw: string | number | undefined): string | undefined {
+  if (typeof raw === "number") return STATUS_CODE_TO_NAME[String(raw)];
+  if (typeof raw === "string") {
+    const upper = raw.toUpperCase();
+    // Already a known name?
+    if (Object.values(TX_STATUS).includes(upper as TxStatus)) return upper;
+    // A numeric string like "5"?
+    if (raw in STATUS_CODE_TO_NAME) return STATUS_CODE_TO_NAME[raw];
+  }
+  return undefined;
+}
+
 export type ConsensusVerdict =
   /** Consensus committed the transaction. State MAY have changed - verify it. */
   | "COMMITTED"
@@ -84,10 +120,9 @@ export interface ReceiptLike {
 export function classifyReceipt(receipt: ReceiptLike | null | undefined): ConsensusVerdict {
   if (!receipt) return "UNDETERMINED";
 
-  const raw = receipt.statusName ?? receipt.status;
-  if (typeof raw !== "string") return "UNDETERMINED";
+  const status = statusToName(receipt.statusName ?? receipt.status);
+  if (!status) return "UNDETERMINED";
 
-  const status = raw.toUpperCase();
   if (UNDETERMINED_STATUSES.has(status)) return "UNDETERMINED";
   if (FAILED_STATUSES.has(status)) return "FAILED";
   if (PENDING_STATUSES.has(status)) return "PENDING";

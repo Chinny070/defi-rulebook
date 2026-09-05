@@ -38,11 +38,23 @@ describe("consensus classification", () => {
     expect(classifyReceipt(undefined)).toBe("UNDETERMINED");
     expect(classifyReceipt({})).toBe("UNDETERMINED");
     expect(classifyReceipt({ statusName: "SOMETHING_NEW" })).toBe("UNDETERMINED");
-    expect(classifyReceipt({ status: 5 })).toBe("UNDETERMINED");
+    expect(classifyReceipt({ status: 999 })).toBe("UNDETERMINED");
   });
 
-  it("falls back to the numeric status field only when it is a string", () => {
+  it("resolves numeric status codes the SDK reports (regression: false UNDETERMINED)", () => {
+    // genlayer-js reports status as a number; 5=ACCEPTED, 7=FINALIZED,
+    // 6=UNDETERMINED, 8=CANCELED. A committed tx arriving as a number must
+    // not be misread as undetermined.
+    expect(classifyReceipt({ status: 5 })).toBe("COMMITTED");
+    expect(classifyReceipt({ status: 7 })).toBe("COMMITTED");
+    expect(classifyReceipt({ status: 6 })).toBe("UNDETERMINED");
+    expect(classifyReceipt({ status: 8 })).toBe("FAILED");
+  });
+
+  it("falls back to the status field whether it is a name or a numeric string", () => {
     expect(classifyReceipt({ status: "ACCEPTED" })).toBe("COMMITTED");
+    expect(classifyReceipt({ status: "5" })).toBe("COMMITTED");
+    expect(classifyReceipt({ status: "7" })).toBe("COMMITTED");
   });
 
   it("is case insensitive", () => {

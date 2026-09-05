@@ -12,7 +12,13 @@
  * reports STATE_MISMATCH rather than guessing.
  */
 
-import { classifyReceipt, explainVerdict, type ConsensusVerdict, type ReceiptLike } from "./consensus";
+import {
+  classifyReceipt,
+  explainVerdict,
+  statusToName,
+  type ConsensusVerdict,
+  type ReceiptLike,
+} from "./consensus";
 import { describeWalletError } from "./errors";
 
 export type WriteState =
@@ -78,8 +84,7 @@ export interface WriteOutcome<T> {
 
 function statusNameOf(receipt: ReceiptLike | null | undefined): string | undefined {
   if (!receipt) return undefined;
-  const raw = receipt.statusName ?? receipt.status;
-  return typeof raw === "string" ? raw : undefined;
+  return statusToName(receipt.statusName ?? receipt.status);
 }
 
 /**
@@ -137,67 +142,83 @@ export async function runWrite<T>(request: WriteRequest<T>): Promise<WriteOutcom
     message: explainVerdict(consensus, statusName),
   });
 
-  if (consensus !== "COMMITTED") {
-    const state: WriteState = consensus === "FAILED" ? "FAILED" : "UNDETERMINED";
+  // An explicit rejection means no state change - trust it, do not re-read.
+  if (consensus === "FAILED") {
     const outcome: WriteOutcome<T> = {
-      state,
+      state: "FAILED",
       hash,
       consensus,
       statusName,
       message: explainVerdict(consensus, statusName),
     };
-    report({ ...outcome, state });
+    report({ ...outcome, state: "FAILED" });
     return outcome;
   }
 
-  // Committed is still not success. Ask the contract.
+  // For every other outcome we HAVE a receipt, so the contract's own state is
+  // the authority - not the receipt's status label. A committed transaction
+  // still must be confirmed by re-reading; and a receipt the SDK reported as
+  // undetermined/pending may nonetheless have applied (the status label and
+  // the committed state can disagree). So we always re-read and let the
+  // contract decide. Success is still only ever claimed when state confirms it.
   report({
     state: "STATE_REVALIDATING",
     hash,
     consensus,
     statusName,
-    message: "Consensus committed. Re-reading contract state to confirm.",
+    message: "Re-reading contract state to confirm the change.",
   });
 
   let verified: { ok: boolean; detail?: string; value?: T };
   try {
     verified = await request.verify();
   } catch (error) {
+    // Could not re-read. If consensus looked committed this is a mismatch; if
+    // it looked unresolved, keep it unresolved. Either way, not a success.
     const message = error instanceof Error ? error.message : String(error);
+    const state: WriteState = consensus === "COMMITTED" ? "STATE_MISMATCH" : "UNDETERMINED";
     const outcome: WriteOutcome<T> = {
-      state: "STATE_MISMATCH",
-      hash,
-      consensus,
-      statusName,
-      message: "Could not confirm the change by re-reading contract state.",
-      error: message,
-    };
-    report({ ...outcome, state: "STATE_MISMATCH" });
-    return outcome;
-  }
-
-  if (!verified.ok) {
-    const outcome: WriteOutcome<T> = {
-      state: "STATE_MISMATCH",
+      state,
       hash,
       consensus,
       statusName,
       message:
-        verified.detail ??
-        "Consensus committed, but contract state does not show the expected change.",
+        state === "STATE_MISMATCH"
+          ? "Could not confirm the change by re-reading contract state."
+          : explainVerdict(consensus, statusName),
+      error: message,
     };
-    report({ ...outcome, state: "STATE_MISMATCH" });
+    report({ ...outcome, state });
     return outcome;
   }
 
+  if (verified.ok) {
+    const outcome: WriteOutcome<T> = {
+      state: "SUCCESS",
+      hash,
+      consensus,
+      statusName,
+      message: "Confirmed on-chain.",
+      value: verified.value,
+    };
+    report({ ...outcome, state: "SUCCESS" });
+    return outcome;
+  }
+
+  // State does not (yet) show the change. If consensus committed, that is a
+  // genuine mismatch; otherwise the transaction is still unresolved.
+  const state: WriteState = consensus === "COMMITTED" ? "STATE_MISMATCH" : "UNDETERMINED";
   const outcome: WriteOutcome<T> = {
-    state: "SUCCESS",
+    state,
     hash,
     consensus,
     statusName,
-    message: "Confirmed on-chain.",
-    value: verified.value,
+    message:
+      state === "STATE_MISMATCH"
+        ? verified.detail ??
+          "Consensus committed, but contract state does not show the expected change."
+        : explainVerdict(consensus, statusName),
   };
-  report({ ...outcome, state: "SUCCESS" });
+  report({ ...outcome, state });
   return outcome;
 }
